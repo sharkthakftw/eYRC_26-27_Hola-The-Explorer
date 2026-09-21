@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright (c) 2026 e-Yantra, IIT Bombay. All rights reserved.
 # These simulation files and source code are the intellectual property of e-Yantra,
 # IIT Bombay, provided solely for eYRC 2026-27 (Theme: Hola The Explorer).
@@ -16,14 +17,12 @@
 *****************************************************************************************
 '''
 
-# Team ID:          [ Team-ID ]
-# Author List:      [ Names of team members who worked on this file, separated by comma ]
+# Team ID:          [ eYRC#3142 ]
+# Author List:      [ Shourya Gupta, Sarthak Gupta ]
 # Filename:         camera_detection.py
 # Functions:        centre_of_quad(), find_trapezoids(), main()
-#                   [ Add every extra helper function you write to this list ]
 # Global variables: STREAM_URL, WINDOW, BINARY_WINDOW, FPS_WINDOW, ARENA_*, SAND_DISTANCE,
 #                   HOUGH_*, MIN_TRAPEZOID_AREA, PARALLEL_TOLERANCE_DEG, REPORT_PERIOD_SEC
-#                   [ Add every extra global variable you declare to this list ]
 # Service Clients:  pixel_to_world  ->  shape_interface/srv/PixelToWorld
 
 
@@ -96,6 +95,13 @@ ARENA_X0, ARENA_Y0, ARENA_X1, ARENA_Y1 = 304, 24, 975, 695
 # threshold separates cleanly. Raise it if noise leaks in, lower it if the pale
 # cyan funnel disappears.
 SAND_DISTANCE = 40
+CLOSE_KSIZE = 3
+
+CANNY_LOW = 50
+CANNY_HIGH = 150
+
+SCRATCH_THICKNESS = 3
+SCRATCH_CLOSE_KSIZE = 5
 
 # Line-detection parameters. The funnel borders are thin outlines only a few
 # pixels wide: a large enough minimum length keeps small icon detail out, and a
@@ -173,6 +179,85 @@ def centre_of_quad(corners):
 
     return cx, cy
 
+def make_mask_lab(img):
+    """Step 2: 255 where the pixel is NOT floor, 0 where it is."""
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    floor = np.array(
+        [np.bincount(lab[:, :, c].ravel(), minlength=256).argmax()
+         for c in range(3)], np.float32)
+    dist = np.linalg.norm(lab.astype(np.float32) - floor, axis=2)
+    return ((dist > SAND_DISTANCE) * 255).astype(np.uint8)
+
+
+def close_mask(mask):
+    """Step 3: small closing so thin borders aren't broken."""
+    k = cv2.getStructuringElement(cv2.MORPH_RECT, (CLOSE_KSIZE, CLOSE_KSIZE))
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
+
+
+def detect_segments(mask):
+    """Step 4: Canny + probabilistic Hough. Returns (edges, list of segments)."""
+    edges = cv2.Canny(mask, CANNY_LOW, CANNY_HIGH)
+    lines = cv2.HoughLinesP(
+        edges,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=HOUGH_THRESHOLD,
+        minLineLength=HOUGH_MIN_LENGTH,
+        maxLineGap=HOUGH_MAX_GAP,
+    )
+    if lines is None:
+        return edges, []
+    segments = [tuple(int(v) for v in row) for row in lines.reshape(-1, 4)]
+    return edges, segments
+
+
+def build_scratch(shape, segments):
+    """Step 5: throw-away geometry image used only to find the funnels."""
+    h, w = shape[:2]
+    scratch = np.zeros((h, w), np.uint8)
+    for x1, y1, x2, y2 in segments:
+        cv2.line(scratch, (x1, y1), (x2, y2), 255, SCRATCH_THICKNESS)
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT, (SCRATCH_CLOSE_KSIZE, SCRATCH_CLOSE_KSIZE))
+    return cv2.morphologyEx(scratch, cv2.MORPH_CLOSE, kernel)
+
+
+def find_quads(scratch):
+    """Steps 6-7: inner contours -> convex polygons with exactly 4 vertices."""
+    contours, hierarchy = cv2.findContours(
+        scratch, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    if hierarchy is None:
+        return []
+    hierarchy = hierarchy[0]
+
+    quads = []
+    for i, cnt in enumerate(contours):
+        if hierarchy[i][3] == -1:                 # no parent -> outer contour
+            continue
+        if cv2.contourArea(cnt) < MIN_TRAPEZOID_AREA:
+            continue
+        eps = 0.03 * cv2.arcLength(cnt, True)
+        approx = cv2.approxPolyDP(cnt, eps, True)
+        if len(approx) == 4 and cv2.isContourConvex(approx):
+            quads.append(approx.reshape(4, 2))
+    return quads
+
+
+def angle_diff(a, b):
+    d = abs(a - b) % 180.0
+    return min(d, 180.0 - d)          # 179 vs 1 -> 2, not 178
+
+
+def is_trapezoid(pts):
+    """Step 8: exactly one pair of parallel opposite sides."""
+    ang = []
+    for j in range(4):
+        dx, dy = pts[(j + 1) % 4] - pts[j]
+        ang.append(np.degrees(np.arctan2(dy, dx)) % 180.0)
+    n = sum(angle_diff(ang[a], ang[b]) < PARALLEL_TOLERANCE_DEG
+            for a, b in ((0, 2), (1, 3)))
+    return n == 1
 
 def find_trapezoids(frame):
     """
@@ -265,6 +350,36 @@ def find_trapezoids(frame):
     trapezoids = []
 
     ##############  ADD YOUR CODE HERE  ##############
+
+    binary = np.zeros(frame.shape[:2], np.uint8)
+    trapezoids = []
+
+    # 1. crop to arena
+    x1 = ARENA_X1 if ARENA_X1 is not None else frame.shape[1]
+    y1 = ARENA_Y1 if ARENA_Y1 is not None else frame.shape[0]
+    crop = frame[ARENA_Y0:y1, ARENA_X0:x1]
+
+    # 2-3. mask + closing
+    mask = close_mask(make_mask_lab(crop))
+
+    # 4. edges + segments
+    edges, segments = detect_segments(mask)
+
+    # 5. scratch image
+    scratch = build_scratch(crop.shape, segments)
+
+    # 6-8. contours -> quads -> trapezoids
+    quads = find_quads(scratch)
+    accepted = [q for q in quads if is_trapezoid(q)]
+
+    # 9-10. shift to full-frame coords, centres, draw binary
+    offset = np.array([ARENA_X0, ARENA_Y0])
+    for q in accepted:
+        corners = q + offset
+        cx, cy = centre_of_quad(corners)
+        trapezoids.append((cx, cy, corners))
+        cv2.polylines(binary, [corners.astype(np.int32).reshape(-1, 1, 2)],
+                      True, 255, 2)
 
     ##################################################
 
