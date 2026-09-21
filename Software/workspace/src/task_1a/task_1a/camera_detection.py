@@ -279,33 +279,23 @@ def main():
     Open the camera stream, run find_trapezoids() on every frame, display the
     result, and periodically convert each trapezoid centre to world
     coordinates through the `pixel_to_world` service.
-
-    Most of this function is written for you. Only the marked block is yours.
-
-    Input Arguments:
-    ---
-    None
-
-    Returns:
-    ---
-    None
-
-    Example call:
-    ---
-    Called automatically by the Python interpreter.
     """
 
+    # 1. Initialize ROS 2 and create the node and client
     rclpy.init()
     node = Node("camera_feed")
     client = node.create_client(PixelToWorld, "pixel_to_world")
 
     node.get_logger().info("waiting for the pixel_to_world service ...")
+    
+    # Wait up to 10 seconds for the service to become available
     if not client.wait_for_service(timeout_sec=10.0):
         node.get_logger().error(
             "pixel_to_world is not up. Start it first: ros2 run task_1a pixel_to_world_service")
         rclpy.shutdown()
         return
 
+    # 2. Open the video stream
     cap = cv2.VideoCapture(STREAM_URL)
     if not cap.isOpened():
         node.get_logger().error(f"could not open {STREAM_URL}")
@@ -314,76 +304,86 @@ def main():
         rclpy.shutdown()
         return
 
+    # 3. Setup variables for rolling FPS calculation and reporting intervals
     stamps = deque(maxlen=FPS_WINDOW)
     fps = 0.0
     last_report = 0.0
 
+    # 4. Main processing loop
     while rclpy.ok():
         ok, frame = cap.read()
         if not ok:
             break
 
-        # rolling frame rate over the last FPS_WINDOW frames
+        # Calculate rolling frame rate over the last FPS_WINDOW frames
         stamps.append(time.monotonic())
         if len(stamps) >= 2:
             span = stamps[-1] - stamps[0]
             fps = (len(stamps) - 1) / span if span > 0 else 0.0
 
+        # Process the frame to find trapezoids
         binary, trapezoids = find_trapezoids(frame)
 
-        # overlay: red outline + yellow centre dot for every detection
+        # Overlay: red outline + yellow centre dot for every detection
         for cx, cy, corners in trapezoids:
             cv2.polylines(frame, [np.round(corners).astype(np.int32)], True, (0, 0, 255), 2)
             cv2.circle(frame, (int(round(cx)), int(round(cy))), 6, (0, 255, 255), -1)
 
+        # Draw FPS and count text on the frame
         cv2.putText(frame, f"{fps:5.1f} FPS", (12, 34), cv2.FONT_HERSHEY_SIMPLEX,
                     1.0, (0, 255, 0), 2, cv2.LINE_AA)
         cv2.putText(frame, f"{len(trapezoids)} trapezoids", (12, 68),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
+        
+        # Display the windows
         cv2.imshow(WINDOW, frame)
         cv2.imshow(BINARY_WINDOW, binary)
 
+        # 5. Periodically send detected coordinates to the ROS 2 service
         now = time.monotonic()
         if trapezoids and now - last_report >= REPORT_PERIOD_SEC:
             last_report = now
             print(f"\n{len(trapezoids)} trapezoid(s):")
 
-            # sorted top-to-bottom, then left-to-right, so the printed order is
+            # Sorted top-to-bottom, then left-to-right, so the printed order is
             # stable from frame to frame
             for cx, cy, _ in sorted(trapezoids, key=lambda t: (t[1], t[0])):
 
-                ##############  ADD YOUR CODE HERE  ##############
-                #
-                # Convert this one pixel centre to world coordinates:
-                #
-                #   a. Build a PixelToWorld.Request() and fill in its
-                #      `pixel_x` and `pixel_y` fields (they are float64 --
-                #      cast, or the service call will reject them).
-                #   b. Send it with the ASYNCHRONOUS client call, then wait for
-                #      the answer with a spin-until-complete helper and a
-                #      timeout of about 1 second. Never use the blocking call
-                #      here -- it deadlocks when you are already spinning.
-                #   c. Read the result. Three cases to print, all of them:
-                #        - result is None                 -> the call timed out
-                #        - result.success is False        -> print .message
-                #        - otherwise                      -> print .world_x and
-                #                                            .world_y, in metres
-                #
-                # Suggested output format:
-                #   print(f"  pixel ({cx:7.2f}, {cy:7.2f})  ->  "
-                #         f"world ({wx:6.3f}, {wy:6.3f}) m")
-                #
-                # The service definition is in
-                #   src/shape_interface/srv/PixelToWorld.srv
-                # Read it -- it tells you the exact field names.
-
-                pass
+                ##############  YOUR CODE BLOCK  ##############
+                
+                # a. Build a PixelToWorld.Request() and fill in fields (cast to float)
+                req = PixelToWorld.Request()
+                req.pixel_x = float(cx)
+                req.pixel_y = float(cy)
+                
+                # b. Send it with the ASYNCHRONOUS client call, then wait for the answer
+                future = client.call_async(req)
+                
+                # Spin until the service responds or 1.0 seconds pass to prevent deadlocks
+                rclpy.spin_until_future_complete(node, future, timeout_sec=1.0)
+                
+                # c. Read the result and handle the three cases
+                result = future.result()
+                
+                if result is None:
+                    # Case 1: result is None -> the call timed out
+                    print(f"  pixel ({cx:7.2f}, {cy:7.2f})  ->  call timed out")
+                elif not result.success:
+                    # Case 2: result.success is False -> print .message
+                    print(f"  pixel ({cx:7.2f}, {cy:7.2f})  ->  Failed: {result.message}")
+                else:
+                    # Case 3: otherwise -> print .world_x and .world_y in metres
+                    wx = result.world_x
+                    wy = result.world_y
+                    print(f"  pixel ({cx:7.2f}, {cy:7.2f})  ->  world ({wx:6.3f}, {wy:6.3f}) m")
 
                 ##################################################
 
+        # Quit if 'q' is pressed
         if (cv2.waitKey(1) & 0xFF) == ord('q'):
             break
 
+    # 6. Cleanup resources
     cap.release()
     cv2.destroyAllWindows()
     node.destroy_node()
