@@ -145,6 +145,7 @@ def centre_of_quad(corners):
 
     cx, cy = 0.0, 0.0
 
+    # Corners of the quadrilateral, in pixel coordinates
     c1x = corners[0,0]
     c1y = corners[0,1]
 
@@ -157,12 +158,16 @@ def centre_of_quad(corners):
     c4x = corners[3,0]
     c4y = corners[3,1]
 
+    # Dot products of the corner coordinates, used to compute the area and centroid
     d1 = c1x*c2y - c2x*c1y
     d2 = c2x*c3y - c3x*c2y
     d3 = c3x*c4y - c4x*c3y
     d4 = c4x*c1y - c1x*c4y
+
+    # Area of the quadrilateral, used to compute the centroid
     area = (d1 + d2 + d3 + d4) / 2
 
+    # Centroid coordinates, computed as a weighted average of the corner coordinates
     cx = ((c1x+c2x)*d1 + (c2x+c3x)*d2 + (c3x+c4x)*d3 + (c4x+c1x)*d4 ) / (6*area)
     cy = ((c1y+c2y)*d1 + (c2y+c3y)*d2 + (c3y+c4y)*d3 + (c4y+c1y)*d4 ) / (6*area)
 
@@ -176,6 +181,21 @@ def find_trapezoids(frame):
     Locate the three station funnels (trapezoids) in one camera frame.
 
     Suggested pipeline -- you write every step:
+
+      1. CROP to the arena rectangle (ARENA_X0 .. ARENA_Y1). Work on the crop
+         from here on and remember to add the offset back at the end.
+
+      2. BUILD A MASK of "everything that is not floor".
+         Do NOT use a plain HSV hue range: the three funnels are cyan, green
+         and orange, and the cyan one is so pale that any hue band wide enough
+         to catch it also catches the sand.
+         Instead: convert the crop to the LAB colour space, find the floor's
+         own colour (the MOST COMMON value in each of the three channels -- a
+         histogram/bincount gives you this), then measure how far every pixel
+         is from that colour. Pixels farther than SAND_DISTANCE are features.
+
+      3. CLEAN the mask with a small morphological closing so the thin borders
+         are not broken up.
 
       4. DETECT EDGES (Canny) and then LINE SEGMENTS with the probabilistic
          Hough transform, using HOUGH_THRESHOLD / HOUGH_MIN_LENGTH /
