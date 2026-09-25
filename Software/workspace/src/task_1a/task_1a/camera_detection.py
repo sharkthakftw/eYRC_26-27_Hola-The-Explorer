@@ -128,12 +128,6 @@ PARALLEL_TOLERANCE_DEG = 9
 # put ~90 service calls a second on the wire for no benefit.
 REPORT_PERIOD_SEC = 0.5
 
-# Flip this on while retuning to pop up a live window showing just the LAB
-# distance mask (step 2 of the pipeline), before Canny/Hough ever run. It's
-# the fastest way to see whether a missing funnel is a colour-threshold
-# problem or a downstream geometry problem.
-DEBUG_SHOW_MASK = False
-
 ###############################################################
 
 
@@ -344,9 +338,6 @@ def find_trapezoids(frame):
     # 2 & 3. Generate and clean the colour mask
     raw_mask = make_mask_lab(crop)
     mask = close_mask(raw_mask)
-
-    if DEBUG_SHOW_MASK:
-        cv2.imshow("debug_mask", mask)
 
     # 4. Detect edges and line segments
     edges = cv2.Canny(mask, 50, 150)
