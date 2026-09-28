@@ -451,6 +451,8 @@ def main():
         cv2.imshow(WINDOW, frame)
         cv2.imshow(BINARY_WINDOW, binary)
 
+        cv2.imwrite("HE_eYRC#3142_binary.png", binary)
+
         now = time.monotonic()
         if trapezoids and now - last_report >= REPORT_PERIOD_SEC:
             last_report = now
@@ -521,7 +523,6 @@ def main():
     cv2.destroyAllWindows()
     node.destroy_node()
     rclpy.shutdown()
-
 
 ##############################################################
 if __name__ == "__main__":
