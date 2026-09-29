@@ -18,32 +18,49 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import Float64MultiArray
 from shape_interface.srv import GetShape
 
+
+WHEEL_RADIUS_M = 0.0255
+CHASSIS_RADIUS_M = 0.06412
+WHEEL_ANGLES_RAD = np.radians([30.0, 150.0, 270.0])
+
+_BODY_TO_WHEEL_LIN = np.column_stack([
+    -np.sin(WHEEL_ANGLES_RAD),
+    np.cos(WHEEL_ANGLES_RAD),
+    np.full(3, CHASSIS_RADIUS_M),
+])
+
 # Wheel <-> body-velocity mapping, columns are [left, right, back] wheel
 # speed (rad/s); rows are body frame [vx, vy, wz] per unit wheel speed.
-_WHEEL_TO_BODY = np.array([
-    [0.0, 0.0, 0.0],  # vx per unit [left, right, back] wheel speed
-    [0.0, 0.0, 0.0],  # vy per unit [left, right, back] wheel speed
-    [0.0, 0.0, 0.0],  # wz per unit [left, right, back] wheel speed
-])
+_WHEEL_TO_BODY = WHEEL_RADIUS_M * np.linalg.inv(_BODY_TO_WHEEL_LIN)
+# _WHEEL_TO_BODY = np.array([
+#     [0.0, 0.0, 0.0],  # vx per unit [left, right, back] wheel speed
+#     [0.0, 0.0, 0.0],  # vy per unit [left, right, back] wheel speed
+#     [0.0, 0.0, 0.0],  # wz per unit [left, right, back] wheel speed
+# ])
 _BODY_TO_WHEEL = np.linalg.inv(_WHEEL_TO_BODY)
-_CTRL_LIMIT = 0.0      # rad/s, matches lekiwi.xml actuator ctrlrange
+_CTRL_LIMIT = 3.14     # rad/s, matches lekiwi.xml actuator ctrlrange
 
-WAYPOINT_TOLERANCE = 0.0   # metres
+ODOM_TOPIC = "/odom"
+CMD_TOPIC  = "/wheel_commands"
+
+WAYPOINT_TOLERANCE  = 0.03   # metres
 CIRCLE_SEGMENTS     = 36
-POSITION_KP         = 0.0
-YAW_HOLD_KP         = 0.0
-CONTROL_PERIOD      = 0.0  
+POSITION_KP         = 1.5
+YAW_HOLD_KP         = 2.0
+CONTROL_PERIOD      = 0.02 # 50Hz
 
 def body_to_wheels(vx, vy, wz):
     """Body-frame (vx, vy, wz) -> wheel angular velocities [left, right, back]."""
     # TODO: convert body velocity to wheel speeds using _BODY_TO_WHEEL,
     # clip each wheel to [-_CTRL_LIMIT, _CTRL_LIMIT], return as a list.
-    pass
+    w = _BODY_TO_WHEEL @ np.array([vx, vy, wz])
+    w = np.clip(w, -_CTRL_LIMIT, _CTRL_LIMIT)
+    return [float(x) for x in w]
 
 
 def yaw_from_quat(w, x, y, z):
     # TODO: convert quaternion to yaw (radians).
-    pass
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 def _regular_polygon(cx, cy, n_sides, side_length, start_angle=math.pi / 2):
