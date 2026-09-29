@@ -104,7 +104,7 @@ class ShapeController(Node):
         self.start_pose = None  # (x, y, yaw), recorded on first odom message
         self.wp_index = 0
         self.done = False
-#Add the publsiher and subscriber scripts
+#Add the publisher and subscriber scripts
     
     def _request_shape(self):
         client = self.create_client(GetShape, "get_shape")
