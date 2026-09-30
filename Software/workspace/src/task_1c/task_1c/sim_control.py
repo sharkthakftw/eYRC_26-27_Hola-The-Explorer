@@ -141,12 +141,12 @@ class ShapeController(Node):
     def _odom_cb(self, msg):
         # TODO: extract (x, y, yaw) from msg.pose.pose into self.pose,
         # and record self.start_pose on the first callback.
-        curr_pos = msg.pose.pose.position       #current-position 
-        curr_ori = msg.pose.pose.orientation    #current-orientation
+        p = msg.pose.pose.position       #current-position 
+        o = msg.pose.pose.orientation    #current-orientation
 
-        yaw = yaw_from_quat(curr_ori.w, curr_ori.x, curr_ori.y, curr_ori.z)
+        yaw = yaw_from_quat(o.w, o.x, o.y, o.z)
 
-        self.pose = (curr_pos.x, curr_pos.y, yaw)
+        self.pose = (p.x, p.y, yaw)
 
         if self.start_pose is None:
             self.start_pose = self.pose
