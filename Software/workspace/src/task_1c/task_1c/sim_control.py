@@ -141,7 +141,15 @@ class ShapeController(Node):
     def _odom_cb(self, msg):
         # TODO: extract (x, y, yaw) from msg.pose.pose into self.pose,
         # and record self.start_pose on the first callback.
-        pass
+        curr_pos = msg.pose.pose.position       #current-position 
+        curr_ori = msg.pose.pose.orientation    #current-orientation
+
+        yaw = yaw_from_quat(curr_ori.w, curr_ori.x, curr_ori.y, curr_ori.z)
+
+        self.pose = (curr_pos.x, curr_pos.y, yaw)
+
+        if self.start_pose is None:
+            self.start_pose = self.pose
 
     def _publish(self, wheels):
         self.cmd_pub.publish(Float64MultiArray(data=wheels))
