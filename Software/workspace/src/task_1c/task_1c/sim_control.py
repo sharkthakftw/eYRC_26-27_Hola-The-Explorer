@@ -126,6 +126,7 @@ class ShapeController(Node):
         self.cmd_pub = self.create_publisher(Float64MultiArray, CMD_TOPIC, 10) #Publisher for wheel commands
         self.odom_sub = self.create_subscription(Odometry, ODOM_TOPIC, self._odom_cb, 10) #Subscriber for odometry messages
         self.shape_name, self.waypoints = self._request_shape()
+        self.control_timer = self.create_timer(CONTROL_PERIOD, self._control_step) #Timer for periodic control steps
         self.get_logger().info(f"Shape: {self.shape_name}, waypoints: {self.waypoints}") 
         
     def _request_shape(self):
