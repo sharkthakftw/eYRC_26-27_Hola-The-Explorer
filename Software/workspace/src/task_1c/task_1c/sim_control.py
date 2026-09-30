@@ -160,8 +160,28 @@ class ShapeController(Node):
         # wp_index on arrival (within WAYPOINT_TOLERANCE), set self.done
         # and stop when all waypoints are reached, then call
         # self._publish(body_to_wheels(vx, vy, wz)) each step.
-        pass
+        tx, ty = self.waypoints[self.wp_index]
+        x, y, yaw = self.pose[0], self.pose[1], self.pose[2]
 
+        dx = tx - x
+        dy = ty - y
+
+        err_pos = sqrt(dx*dx + dy*dy)
+        err_yaw = yaw - atan2(dy, dx)
+
+        if err_pos < WAYPOINT_TOLERANCE:
+            self.wp_index += 1
+            if wp_index >= len(waypoints):
+                self.done = True
+                self._publish([0.0, 0.0, 0.0])
+                self.get_logger().info("Shape complete")
+                return
+            tx, ty = self.waypoints[self.wp_index]
+            dx = tx - x
+            dy = ty - y
+            err_pos = sqrt(dx*dx + dy*dy)
+
+        v = min(self.speed, POSITION_KP * err_pos)
 
 def main():
     parser = argparse.ArgumentParser()
