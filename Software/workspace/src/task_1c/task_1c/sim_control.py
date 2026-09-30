@@ -32,18 +32,10 @@ _BODY_TO_WHEEL_LIN = np.column_stack([
 # Wheel <-> body-velocity mapping, columns are [left, right, back] wheel
 # speed (rad/s); rows are body frame [vx, vy, wz] per unit wheel speed.
 _WHEEL_TO_BODY = WHEEL_RADIUS_M * np.linalg.inv(_BODY_TO_WHEEL_LIN)
-# _WHEEL_TO_BODY = np.array([
-#     [0.0, 0.0, 0.0],  # vx per unit [left, right, back] wheel speed
-#     [0.0, 0.0, 0.0],  # vy per unit [left, right, back] wheel speed
-#     [0.0, 0.0, 0.0],  # wz per unit [left, right, back] wheel speed
-# ])
 _BODY_TO_WHEEL = np.linalg.inv(_WHEEL_TO_BODY)
 _CTRL_LIMIT = 3.14     # rad/s, matches lekiwi.xml actuator ctrlrange
 
-ODOM_TOPIC = "/odom"
-CMD_TOPIC  = "/wheel_commands"
-
-WAYPOINT_TOLERANCE  = 0.03   # metres
+WAYPOINT_TOLERANCE  = 0.03 # metres
 CIRCLE_SEGMENTS     = 36
 POSITION_KP         = 1.5
 YAW_HOLD_KP         = 2.0
@@ -51,7 +43,7 @@ CONTROL_PERIOD      = 0.02 # 50Hz
 
 def body_to_wheels(vx, vy, wz):
     """Body-frame (vx, vy, wz) -> wheel angular velocities [left, right, back]."""
-    # TODO: convert body velocity to wheel speeds using _BODY_TO_WHEEL,
+    # convert body velocity to wheel speeds using _BODY_TO_WHEEL,
     # clip each wheel to [-_CTRL_LIMIT, _CTRL_LIMIT], return as a list.
     w = _BODY_TO_WHEEL @ np.array([vx, vy, wz])
     w = np.clip(w, -_CTRL_LIMIT, _CTRL_LIMIT)
@@ -59,7 +51,7 @@ def body_to_wheels(vx, vy, wz):
 
 
 def yaw_from_quat(w, x, y, z):
-    # TODO: convert quaternion to yaw (radians).
+    # convert quaternion to yaw (radians).
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
@@ -122,13 +114,13 @@ class ShapeController(Node):
         self.wp_index = 0
         self.done = False
 
-#Add the publisher and subscriber scripts
-        self.cmd_pub = self.create_publisher(Float64MultiArray, CMD_TOPIC, 10) #Publisher for wheel commands
-        self.odom_sub = self.create_subscription(Odometry, ODOM_TOPIC, self._odom_cb, 10) #Subscriber for odometry messages
+        self.cmd_pub = self.create_publisher(Float64MultiArray, "/wheel_commands", 10) # publisher for wheel commands
+        self.odom_sub = self.create_subscription(Odometry, "/odom", self._odom_cb, 10) # subscriber for odometry messages
+
         self.shape_name, self.waypoints = self._request_shape()
-        self.control_timer = self.create_timer(CONTROL_PERIOD, self._control_step) #Timer for periodic control steps
+        self.control_timer = self.create_timer(CONTROL_PERIOD, self._control_step) # timer for periodic control steps
         self.get_logger().info(f"Shape: {self.shape_name}, waypoints: {self.waypoints}") 
-        
+
     def _request_shape(self):
         client = self.create_client(GetShape, "get_shape")
         while not client.wait_for_service(timeout_sec=2.0):
@@ -145,10 +137,10 @@ class ShapeController(Node):
         return response.shape_name, build_waypoints(response.shape_name, list(response.data))
 
     def _odom_cb(self, msg):
-        # TODO: extract (x, y, yaw) from msg.pose.pose into self.pose,
+        # extract (x, y, yaw) from msg.pose.pose into self.pose,
         # and record self.start_pose on the first callback.
-        p = msg.pose.pose.position       #current-position 
-        o = msg.pose.pose.orientation    #current-orientation
+        p = msg.pose.pose.position       # current position
+        o = msg.pose.pose.orientation    # current orientation
 
         yaw = yaw_from_quat(o.w, o.x, o.y, o.z)
 
