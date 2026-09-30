@@ -121,6 +121,8 @@ class ShapeController(Node):
         self.start_pose = None  # (x, y, yaw), recorded on first odom message
         self.wp_index = 0
         self.done = False
+
+        self.shape_name, self.waypoints = self._request_shape()
 #Add the publisher and subscriber scripts
     
     def _request_shape(self):
