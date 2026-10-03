@@ -24,8 +24,8 @@ CHASSIS_RADIUS_M = 0.06412
 WHEEL_ANGLES_RAD = np.radians([30.0, 150.0, 270.0])
 
 _BODY_TO_WHEEL_LIN = np.column_stack([
-    -np.sin(WHEEL_ANGLES_RAD),
     np.cos(WHEEL_ANGLES_RAD),
+    np.sin(WHEEL_ANGLES_RAD),
     np.full(3, CHASSIS_RADIUS_M),
 ])
 
@@ -53,6 +53,10 @@ def body_to_wheels(vx, vy, wz):
 def yaw_from_quat(w, x, y, z):
     # convert quaternion to yaw (radians).
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def _wrap_angle(a):
+    return math.atan2(math.sin(a), math.cos(a))
 
 
 def _regular_polygon(cx, cy, n_sides, side_length, start_angle=math.pi / 2):
@@ -141,7 +145,6 @@ class ShapeController(Node):
         # and record self.start_pose on the first callback.
         p = msg.pose.pose.position       # current position
         o = msg.pose.pose.orientation    # current orientation
-
         yaw = yaw_from_quat(o.w, o.x, o.y, o.z)
 
         self.pose = (p.x, p.y, yaw)
@@ -156,22 +159,22 @@ class ShapeController(Node):
         if self.done or self.pose is None:
             return
 
-        # TODO: drive toward self.waypoints[self.wp_index], advance
+        # drive toward self.waypoints[self.wp_index], advance
         # wp_index on arrival (within WAYPOINT_TOLERANCE), set self.done
         # and stop when all waypoints are reached, then call
         # self._publish(body_to_wheels(vx, vy, wz)) each step.
         tx, ty = self.waypoints[self.wp_index]
-        x, y, yaw = self.pose[0], self.pose[1], self.pose[2]
+        x, y, yaw = self.pose
 
         dx = tx - x
         dy = ty - y
 
-        err_pos = sqrt(dx*dx + dy*dy)
-        err_yaw = yaw - atan2(dy, dx)
+        err_pos = math.hypot(dx, dy)
+        err_yaw = yaw - math.atan2(dy, dx)
 
         if err_pos < WAYPOINT_TOLERANCE:
             self.wp_index += 1
-            if wp_index >= len(waypoints):
+            if self.wp_index >= len(self.waypoints):
                 self.done = True
                 self._publish([0.0, 0.0, 0.0])
                 self.get_logger().info("Shape complete")
@@ -179,13 +182,25 @@ class ShapeController(Node):
             tx, ty = self.waypoints[self.wp_index]
             dx = tx - x
             dy = ty - y
-            err_pos = sqrt(dx*dx + dy*dy)
+            err_pos = math.sqrt(dx*dx + dy*dy)
 
         v = min(self.speed, POSITION_KP * err_pos)
+        if err_pos > 1e-6:
+            vx_w, vy_w = v * dx / err_pos, v * dy / err_pos
+        else:
+            vx_w = vy_w = 0.0
+
+        c, s = math.cos(yaw), math.sin(yaw)
+        vx_b = c * vx_w + s * vy_w
+        vy_b = -s * vx_w + c * vy_w
+
+        wz = YAW_HOLD_KP * _wrap_angle(self.start_pose[2] - yaw)
+        self._publish(body_to_wheels(vx_b, vy_b, wz))
+
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--speed", type=float, default=0.25,
+    parser.add_argument("--speed", type=float, default=0.06,
                          help="max approach speed, m/s")
     args, ros_args = parser.parse_known_args()
 
