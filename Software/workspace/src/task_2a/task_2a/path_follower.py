@@ -16,7 +16,7 @@
 *****************************************************************************************
 '''
 
-# Team ID:          [ Team-ID ]
+# Team ID:          [ 3142 ]
 # Author List:      [ Names of team members who worked on this file, separated by comma ]
 # Filename:         path_follower.py
 # Functions:        [ Add every extra helper function you write to this list ]
@@ -74,7 +74,7 @@ SETTLE_TICKS = 0              # ticks in a row inside GOAL_TOLERANCE = arrived
 # ----------------------------------------------------- robot (same as Task 1B)
 WHEEL_RADIUS_M = 0.0255       # m
 CHASSIS_RADIUS_M = 0.06412    # m, chassis centre to each wheel's axle
-WHEEL_ANGLES_RAD = np.radians([0.0, 0.0, 0.0])   # TODO: from Task 1B, [left, right, back]
+WHEEL_ANGLES_RAD = np.radians([30.0, 150.0, 270.0]) # from Task 1B, [left, right, back]
 IK_MATRIX = np.zeros((3, 3))                     # TODO: from Task 1B
 _CTRL_LIMIT = 30.0            # rad/s, the wheels' ctrlrange in the robot's MJCF:
                               # faster commands are clamped by the simulation
@@ -84,38 +84,32 @@ _CTRL_LIMIT = 30.0            # rad/s, the wheels' ctrlrange in the robot's MJCF
 
 def body_velocity_to_wheel_speeds(vx, vy, w):
     """Body twist (vx, vy, w) -> wheel speeds [left, right, back], rad/s."""
-    ##############  ADD YOUR CODE HERE  ##############
-    # TODO: Task 1B
-    pass
-    ##################################################
+    # Task 1B
+    angles = WHEEL_ANGLES_RAD
+    linear_speed = vx * np.cos(angles) + vy * np.sin(angles)
+    rotational_speed = w * CHASSIS_RADIUS_M
+    return (linear_speed + rotational_speed) / WHEEL_RADIUS_M
 
 
 def body_to_wheels(vx, vy, wz):
     """Like body_velocity_to_wheel_speeds(), but kept inside +/-_CTRL_LIMIT.
     Returns a list."""
-    ##############  ADD YOUR CODE HERE  ##############
     # TODO: Task 1C. Scale all three wheels down together, do not clip each
     # one: clipping changes the direction the robot drives in.
     pass
-    ##################################################
 
 
 def yaw_from_quat(w, x, y, z):
     """Quaternion -> yaw, radians."""
-    ##############  ADD YOUR CODE HERE  ##############
-    # TODO: Task 1C
-    pass
-    ##################################################
+    # Task 1C
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 ######################### NEW IN 2A ###########################
 
 def wrap(a):
     """Angle -> the same angle in (-pi, pi]. 350 degrees becomes -10."""
-    ##############  ADD YOUR CODE HERE  ##############
-    # TODO
-    pass
-    ##################################################
+    return math.atan2(math.sin(a), math.cos(a))
 
 
 def to_body(vx_a, vy_a, yaw):
