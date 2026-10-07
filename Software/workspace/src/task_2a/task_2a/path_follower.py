@@ -17,7 +17,7 @@
 '''
 
 # Team ID:          [ 3142 ]
-# Author List:      [ Names of team members who worked on this file, separated by comma ]
+# Author List:      [ Shourya Gupta, Sarthak Gupta]
 # Filename:         path_follower.py
 # Functions:        [ Add every extra helper function you write to this list ]
 # Global variables: [ Add every extra global variable you declare to this list ]
@@ -67,9 +67,10 @@ GOALS = {"r1": (0.6692, 0.8692),
 ORDER = ("r1", "r2", "r3")    # one node per robot
 
 # ----------------------------------------------------- yours to set
-CONTROL_HZ = 0.0              # how often tick() runs
-GOAL_TOLERANCE = 0.0          # m, how close counts as "at the goal"
-SETTLE_TICKS = 0              # ticks in a row inside GOAL_TOLERANCE = arrived
+# By Shourya -> ye values ko change krna confirm nhi h
+CONTROL_HZ = 20.0              # how often tick() runs
+GOAL_TOLERANCE = 3.0          # m, how close counts as "at the goal"
+SETTLE_TICKS = 10            # ticks in a row inside GOAL_TOLERANCE = arrived
 
 # ----------------------------------------------------- robot (same as Task 1B)
 WHEEL_RADIUS_M = 0.0255       # m
@@ -94,10 +95,12 @@ def body_velocity_to_wheel_speeds(vx, vy, w):
 def body_to_wheels(vx, vy, wz):
     """Like body_velocity_to_wheel_speeds(), but kept inside +/-_CTRL_LIMIT.
     Returns a list."""
-    # TODO: Task 1C. Scale all three wheels down together, do not clip each
-    # one: clipping changes the direction the robot drives in.
-    pass
-
+    raw_wheel_speeds = body_velocity_to_wheel_speeds(vx, vy, wz)
+    max_w = max(abs(w) for w in raw_wheel_speeds)
+    if max_w > _CTRL_LIMIT:
+        scaled_wheel_speeds = [w * (_CTRL_LIMIT / max_w) for w in raw_wheel_speeds]
+        return scaled_wheel_speeds
+    return raw_wheel_speeds
 
 def yaw_from_quat(w, x, y, z):
     """Quaternion -> yaw, radians."""
@@ -116,8 +119,10 @@ def to_body(vx_a, vy_a, yaw):
     """Arena-frame velocity -> body-frame velocity (vx, vy).
     Check: at yaw = -pi/2 (facing up), arena (0, -v) must give body (v, 0)."""
     ##############  ADD YOUR CODE HERE  ##############
-    # TODO
-    pass
+    vx = (vx_a * math.cos(yaw)) + (vy_a * math.sin(yaw))
+    vy = (-1 * vx_a * math.sin(yaw)) + (vy_a * math.sin(yaw))
+
+    return (vx, vy)
     ##################################################
 
 
@@ -142,7 +147,14 @@ class GoToPoint:
         self.tol = tol                                   # m, stop inside this
         self.dt = dt                                     # s, 1 / CONTROL_HZ
         ##############  ADD YOUR CODE HERE  ##############
-        # TODO: PID state -- integrals and previous errors for (x, y) and yaw
+        self.prev_error_x = 0.0
+        self.prev_error_y = 0.0
+        self.prev_error_yaw = 0.0
+        self.integeral_x = 0.0
+        self.integeral_y = 0.0
+        self.integeral_yaw = 0.0
+        self.integral_limit = 1.0
+
         ##################################################
 
     def step(self, pose, target, hold_yaw):
@@ -154,7 +166,64 @@ class GoToPoint:
         #      capped at v_max, integral limited so it cannot wind up
         #   3. wz from a PID on wrap(hold_yaw - yaw), capped at w_max
         #   4. to_body(), then body_to_wheels()
-        pass
+        error_x = target[0] - pose[0]
+        error_y = target[1] - pose[1]
+        dist = math.sqrt(error_x * error_x + error_y * error_y)
+
+        if dist <= self.tol:
+            vx_a = 0
+            vy_a = 0
+            self.integeral_y = 0.0
+            self.integeral_x = 0.0
+
+        else:
+            self.integral_x += error_x * self.dt
+            self.integral_y += error_y * self.dt
+            self.integral_x = max(-self.integral_limit, min(self.integral_limit, self.integral_x))
+            self.integral_y = max(-self.integral_limit, min(self.integral_limit, self.integral_y))
+            
+            deriv_x = (error_x - self.prev_error_x) / self.dt
+            deriv_y = (error_y - self.prev_error_y) / self.dt
+
+            Px = self.kp * error_x
+            Ix = self.ki * self.integral_x
+            Dx = self.kd * deriv_x
+
+            Py = self.kp * error_y
+            Iy = self.ki * self.integral_y
+            Dy = self.kd * deriv_y
+
+            vx_a = Px + Ix + Dx
+            vy_a = Py + Iy + Dy
+
+            speed = math.hypot(vx_a, vy_a)
+            if speed > self.v_max:
+                scale = self.v_max / speed
+                vx_a *= scale
+                vy_a *= scale
+
+        self.prev_error_x = error_x
+        self.prev_error_y = error_y
+
+        error_yaw = wrap(hold_yaw - pose[2])
+
+        self.integeral_yaw += error_yaw * self.dt
+        self.integeral_yaw = max(-self.integral_limit, min(self.integral_limit, self.integeral_yaw))
+
+        deriv_yaw = (error_yaw - self,self.prev_error_yaw) / self.dt
+        self.prev_error_yaw = error_yaw
+
+        Pwz = self.kyaw * error_yaw
+        Iwz = self.kiyaw * self.integeral_yaw
+        Dwz = self.kdyaw * deriv_yaw
+
+        wz = Pwz + Iwz + Dwz
+        wz = max(-self.w_max, min(self.w_max, wz))
+
+        vx_b, vy_b = to_body(vx_a, vy_a, pose[2])
+        wheels = body_to_wheels(vx_b, vy_b, wz)
+
+        return (wheels, dist) 
         ##################################################
 
 
@@ -181,6 +250,9 @@ class RobotNode(Node):
         #     /<robot>/wheel_commands in self.pub
         #   - self.ctl = a GoToPoint for this robot
         #   - a timer calling self.tick at CONTROL_HZ
+        self.odom_sub = self.create_subscription(Odometry, "/odom", self._odom_cb, 10)
+        self.cmd_pub = self.create_publisher(Float64MultiArray, "/<robot>/wheel_commands", 10)
+        self.ctl = GoToPoint(v_max = None, )
         ##################################################
 
     def odom_cb(self, msg):

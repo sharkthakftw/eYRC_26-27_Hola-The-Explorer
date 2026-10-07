@@ -159,44 +159,51 @@ class ShapeController(Node):
         if self.done or self.pose is None:
             return
 
-        # drive toward self.waypoints[self.wp_index], advance
-        # wp_index on arrival (within WAYPOINT_TOLERANCE), set self.done
-        # and stop when all waypoints are reached, then call
-        # self._publish(body_to_wheels(vx, vy, wz)) each step.
-        tx, ty = self.waypoints[self.wp_index]
+        if not self.waypoints:
+            self.done = True
+            self._publish([0.0, 0.0, 0.0])
+            self.get_logger().error("No waypoints were provided; stopping.")
+            return
+
         x, y, yaw = self.pose
 
-        dx = tx - x
-        dy = ty - y
-
-        err_pos = math.hypot(dx, dy)
-        err_yaw = yaw - math.atan2(dy, dx)
-
-        if err_pos < WAYPOINT_TOLERANCE:
-            self.wp_index += 1
-            if self.wp_index >= len(self.waypoints):
-                self.done = True
-                self._publish([0.0, 0.0, 0.0])
-                self.get_logger().info("Shape complete")
-                return
+        # Skip any waypoints already inside the arrival tolerance.
+        while self.wp_index < len(self.waypoints):
             tx, ty = self.waypoints[self.wp_index]
             dx = tx - x
             dy = ty - y
-            err_pos = math.sqrt(dx*dx + dy*dy)
+            distance = math.hypot(dx, dy)
+            if distance > WAYPOINT_TOLERANCE:
+                break
+            self.wp_index += 1
 
-        v = min(self.speed, POSITION_KP * err_pos)
-        if err_pos > 1e-6:
-            vx_w, vy_w = v * dx / err_pos, v * dy / err_pos
-        else:
-            vx_w = vy_w = 0.0
+        if self.wp_index >= len(self.waypoints):
+            self.done = True
+            self._publish([0.0, 0.0, 0.0])
+            self.get_logger().info("Shape complete")
+            return
 
-        c, s = math.cos(yaw), math.sin(yaw)
-        vx_b = c * vx_w + s * vy_w
-        vy_b = -s * vx_w + c * vy_w
+        # Use proportional position control, limited to the requested speed.
+        target_yaw = math.atan2(dy, dx)
+        yaw_error = math.atan2(
+            math.sin(target_yaw - yaw),
+            math.cos(target_yaw - yaw),
+        )
 
-        wz = YAW_HOLD_KP * _wrap_angle(self.start_pose[2] - yaw)
-        self._publish(body_to_wheels(vx_b, vy_b, wz))
+        vx_world = POSITION_KP * dx
+        vy_world = POSITION_KP * dy
+        speed = math.hypot(vx_world, vy_world)
+        if speed > self.speed:
+            scale = self.speed / speed
+            vx_world *= scale
+            vy_world *= scale
 
+        # Convert the world-frame motion command into the robot's body frame.
+        vx = math.cos(yaw) * vx_world + math.sin(yaw) * vy_world
+        vy = -math.sin(yaw) * vx_world + math.cos(yaw) * vy_world
+        wz = YAW_HOLD_KP * yaw_error
+
+        self._publish(body_to_wheels(vx, vy, wz))
 
 def main():
     parser = argparse.ArgumentParser()
