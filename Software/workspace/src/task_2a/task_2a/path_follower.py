@@ -20,7 +20,7 @@
 # Author List:      [ Shourya Gupta, Sarthak Gupta]
 # Filename:         path_follower.py
 # Functions:        [ Add every extra helper function you write to this list ]
-# Global variables: [ Add every extra global variable you declare to this list ]
+# Global variables: [V_MAX, W_MAX, KP_POS, KI_POS, KD_POS, KP_YAW, KI_YAW, KD_YAW]
 
 
 ############################ WHAT YOU HAVE TO DO ##############################
@@ -50,7 +50,10 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import Float64MultiArray
 
 ################# ADD EXTRA IMPORTS / GLOBALS HERE ############
-
+V_MAX = 0.6
+W_MAX = 2.0
+KP_POS, KI_POS, KD_POS = 2.5, 0.0, 0.15
+KP_YAW, KI_YAW, KD_YAW = 3.0, 0.0, 0.1
 ###############################################################
 
 
@@ -69,7 +72,7 @@ ORDER = ("r1", "r2", "r3")    # one node per robot
 # ----------------------------------------------------- yours to set
 # By Shourya -> ye values ko change krna confirm nhi h
 CONTROL_HZ = 20.0              # how often tick() runs
-GOAL_TOLERANCE = 3.0          # m, how close counts as "at the goal"
+GOAL_TOLERANCE = 0.03         # m, how close counts as "at the goal"
 SETTLE_TICKS = 10            # ticks in a row inside GOAL_TOLERANCE = arrived
 
 # ----------------------------------------------------- robot (same as Task 1B)
@@ -120,7 +123,7 @@ def to_body(vx_a, vy_a, yaw):
     Check: at yaw = -pi/2 (facing up), arena (0, -v) must give body (v, 0)."""
     ##############  ADD YOUR CODE HERE  ##############
     vx = (vx_a * math.cos(yaw)) + (vy_a * math.sin(yaw))
-    vy = (-1 * vx_a * math.sin(yaw)) + (vy_a * math.sin(yaw))
+    vy = (-vx_a * math.sin(yaw)) + (vy_a * math.cos(yaw))
 
     return (vx, vy)
     ##################################################
@@ -150,9 +153,9 @@ class GoToPoint:
         self.prev_error_x = 0.0
         self.prev_error_y = 0.0
         self.prev_error_yaw = 0.0
-        self.integeral_x = 0.0
-        self.integeral_y = 0.0
-        self.integeral_yaw = 0.0
+        self.integral_x = 0.0
+        self.integral_y = 0.0
+        self.integral_yaw = 0.0
         self.integral_limit = 1.0
 
         ##################################################
@@ -173,8 +176,8 @@ class GoToPoint:
         if dist <= self.tol:
             vx_a = 0
             vy_a = 0
-            self.integeral_y = 0.0
-            self.integeral_x = 0.0
+            self.integral_y = 0.0
+            self.integral_x = 0.0
 
         else:
             self.integral_x += error_x * self.dt
@@ -207,14 +210,14 @@ class GoToPoint:
 
         error_yaw = wrap(hold_yaw - pose[2])
 
-        self.integeral_yaw += error_yaw * self.dt
-        self.integeral_yaw = max(-self.integral_limit, min(self.integral_limit, self.integeral_yaw))
+        self.integral_yaw += error_yaw * self.dt
+        self.integral_yaw = max(-self.integral_limit, min(self.integral_limit, self.integral_yaw))
 
-        deriv_yaw = (error_yaw - self,self.prev_error_yaw) / self.dt
+        deriv_yaw = (error_yaw - self.prev_error_yaw) / self.dt
         self.prev_error_yaw = error_yaw
 
         Pwz = self.kyaw * error_yaw
-        Iwz = self.kiyaw * self.integeral_yaw
+        Iwz = self.kiyaw * self.integral_yaw
         Dwz = self.kdyaw * deriv_yaw
 
         wz = Pwz + Iwz + Dwz
@@ -250,9 +253,21 @@ class RobotNode(Node):
         #     /<robot>/wheel_commands in self.pub
         #   - self.ctl = a GoToPoint for this robot
         #   - a timer calling self.tick at CONTROL_HZ
-        self.odom_sub = self.create_subscription(Odometry, "/odom", self._odom_cb, 10)
-        self.cmd_pub = self.create_publisher(Float64MultiArray, "/<robot>/wheel_commands", 10)
-        self.ctl = GoToPoint(v_max = None, )
+        self.odom_sub = self.create_subscription(Odometry, f"/{self.robot}/odom", self.odom_cb, 10)
+        self.pub = self.create_publisher(Float64MultiArray, f"/{self.robot}/wheel_commands", 10)
+        self.ctl = GoToPoint(
+            v_max=V_MAX,
+            w_max=W_MAX,
+            kp=KP_POS,
+            ki=KI_POS,
+            kd=KD_POS,
+            kyaw=KP_YAW,
+            kiyaw=KI_YAW,
+            kdyaw=KD_YAW,
+            tol=GOAL_TOLERANCE,
+            dt=1.0 / CONTROL_HZ
+            )
+        self.callback_timer = self.create_timer(1 / CONTROL_HZ, self.tick)
         ##################################################
 
     def odom_cb(self, msg):
@@ -260,7 +275,14 @@ class RobotNode(Node):
         # TODO: self.pose = (x, y, yaw). First message only: set
         # self.hold_yaw, log frame_check(x, y) if it complains, and add
         # self.robot to self.ready.
-        pass
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        yaw = yaw_from_quat(msg.pose.pose.orientation.w, msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z)
+        self.pose = (x, y, yaw)
+
+        self.hold_yaw = yaw
+        error = frame_check(x, y)
+        self.ready.add(self.robot)
         ##################################################
 
     def send(self, wheels):
@@ -279,7 +301,23 @@ class RobotNode(Node):
         #   - after SETTLE_TICKS in a row within GOAL_TOLERANCE: set
         #     self.arrived, log "<robot> reached its goal (... mm out)", and
         #     call self.on_arrival(self.robot, seconds since self.t_start)
-        pass
+        if self.arrived:
+            self.send([0.0, 0.0, 0.0])
+            return
+
+        wheel, dist = self.ctl.step(self.pose, GOALS[self.robot], self.hold_yaw)
+
+        if dist < GOAL_TOLERANCE:
+            self.settled += 1
+        else:
+            self.settled = 0
+        if self.settled >= SETTLE_TICKS:
+            self.arrived = True
+            self.send([0.0, 0.0, 0.0])
+            self.on_arrival(self.robot, (self.get_clock().now() - self.t_start).nanoseconds / 1e9)
+            return
+        self.send(wheel)
+
         ##################################################
 
 
