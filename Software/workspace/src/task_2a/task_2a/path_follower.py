@@ -123,7 +123,7 @@ def to_body(vx_a, vy_a, yaw):
     Check: at yaw = -pi/2 (facing up), arena (0, -v) must give body (v, 0)."""
     ##############  ADD YOUR CODE HERE  ##############
     vx = (vx_a * math.cos(yaw)) + (vy_a * math.sin(yaw))                       
-    vy = (vx_a * math.sin(yaw)) - (vy_a * math.cos(yaw))
+    vy = (-vx_a * math.sin(yaw)) + (vy_a * math.cos(yaw))
 
     return (vx, vy)
     ##################################################
