@@ -16,11 +16,11 @@
 *****************************************************************************************
 '''
 
-# Team ID:          [ Team-ID ]
-# Author List:      [ Names of team members who worked on this file, separated by comma ]
+# Team ID:          [ 3142 ]
+# Author List:      [ Shourya Gupta, Sarthak Gupta ]
 # Filename:         path_follower.py
 # Functions:        [ Add every extra helper function you write to this list ]
-# Global variables: [ Add every extra global variable you declare to this list ]
+# Global variables: [ KP_POS, KI_POS, KD_POS, KP_YAW, KI_YAW, KD_YAW ]
 
 
 ############################ WHAT YOU HAVE TO DO ##############################
@@ -51,7 +51,8 @@ from nav_msgs.msg import Odometry, Path
 from std_msgs.msg import Float64MultiArray
 
 ################# ADD EXTRA IMPORTS / GLOBALS HERE ############
-
+KP_POS, KI_POS, KD_POS = 2.5, 0.0, 0.15
+KP_YAW, KI_YAW, KD_YAW = 3.0, 0.0, 0.1
 ###############################################################
 
 
@@ -66,8 +67,8 @@ LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 # ----------------------------------------------------- robot (same as Task 1B)
 WHEEL_RADIUS_M = 0.0255       # m
 CHASSIS_RADIUS_M = 0.06412    # m, chassis centre to each wheel's axle
-WHEEL_ANGLES_RAD = np.radians([0.0, 0.0, 0.0])   # TODO: from Task 2A
-IK_MATRIX = np.zeros((3, 3))                     # TODO: from Task 2A
+WHEEL_ANGLES_RAD = np.radians([30.0, 150.0, 270.0])
+IK_MATRIX = np.zeros((3, 3))
 _CTRL_LIMIT = 30.0            # rad/s, the wheels' ctrlrange in the robot's MJCF:
                               # faster commands are clamped by the simulation
 
@@ -79,23 +80,41 @@ _CTRL_LIMIT = 30.0            # rad/s, the wheels' ctrlrange in the robot's MJCF
 ##############  ADD YOUR CODE HERE  ##############
 
 def body_velocity_to_wheel_speeds(vx, vy, w):
-    pass   # TODO: from Task 2A
+    """Body twist (vx, vy, w) -> wheel speeds [left, right, back], rad/s."""
+    angles = WHEEL_ANGLES_RAD
+    linear_speed = vx * np.cos(angles) + vy * np.sin(angles)
+    rotational_speed = w * CHASSIS_RADIUS_M
+    return (linear_speed + rotational_speed) / WHEEL_RADIUS_M
 
 
 def body_to_wheels(vx, vy, wz):
-    pass   # TODO: from Task 2A
+    """Like body_velocity_to_wheel_speeds(), but kept inside +/-_CTRL_LIMIT.
+    Returns a list."""
+    raw_wheel_speeds = body_velocity_to_wheel_speeds(vx, vy, wz)    # rad/s
+    max_w = max(abs(w) for w in raw_wheel_speeds)                   
+    if max_w > _CTRL_LIMIT:
+        scaled_wheel_speeds = [w * (_CTRL_LIMIT / max_w) for w in raw_wheel_speeds]  # scale down to the limit
+        return scaled_wheel_speeds
+    return raw_wheel_speeds
 
 
 def yaw_from_quat(w, x, y, z):
-    pass   # TODO: from Task 2A
+    """Quaternion -> yaw, radians."""
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 def wrap(a):
-    pass   # TODO: from Task 2A
+    """Angle -> the same angle in (-pi, pi]. 350 degrees becomes -10."""
+    return math.atan2(math.sin(a), math.cos(a))
 
 
 def to_body(vx_a, vy_a, yaw):
-    pass   # TODO: from Task 2A
+    """Arena-frame velocity -> body-frame velocity (vx, vy).
+    Check: at yaw = -pi/2 (facing up), arena (0, -v) must give body (v, 0)."""
+    vx = (vx_a * math.cos(yaw)) + (vy_a * math.sin(yaw))                       
+    vy = (-vx_a * math.sin(yaw)) + (vy_a * math.cos(yaw))
+
+    return (vx, vy)
 
 
 class GoToPoint:
@@ -103,12 +122,97 @@ class GoToPoint:
     GoToPoint(v_max=0.30, tol=0.012, dt=1.0 / CONTROL_HZ), so make your TUNED
     gains the defaults -- zero gains do nothing."""
 
-    def __init__(self, v_max=0.0, w_max=0.0, kp=0.0, ki=0.0, kd=0.0,
-                 kyaw=0.0, kiyaw=0.0, kdyaw=0.0, tol=0.0, dt=0.0):
-        pass   # TODO: from Task 2A
+    def __init__(self, v_max=0.0, w_max=2.0, kp=KP_POS, ki=KI_POS, kd=KD_POS,
+                 kyaw=KP_YAW, kiyaw=KI_YAW, kdyaw=KD_YAW, tol=0.0, dt=0.0):
+        self.v_max, self.w_max = v_max, w_max            # m/s, rad/s caps
+        self.kp, self.ki, self.kd = kp, ki, kd           # position PID
+        self.kyaw, self.kiyaw, self.kdyaw = kyaw, kiyaw, kdyaw   # yaw PID
+        self.tol = tol                                   # m, stop inside this
+        self.dt = dt                                     # s, 1 / CONTROL_HZ
+
+        self.prev_error_x = 0.0
+        self.prev_error_y = 0.0
+        self.prev_error_yaw = 0.0
+        self.integral_x = 0.0
+        self.integral_y = 0.0
+        self.integral_yaw = 0.0
+        self.integral_limit = 1.0
+
 
     def step(self, pose, target, hold_yaw):
-        pass   # TODO: from Task 2A
+        """pose (x, y, yaw), target (x, y), hold_yaw -> (wheels, distance)."""
+        #   1. error and distance from pose to target, in the arena frame
+        #   2. arena velocity from a PID on that error: 0 inside tol, size
+        #      capped at v_max, integral limited so it cannot wind up
+        #   3. wz from a PID on wrap(hold_yaw - yaw), capped at w_max
+        #   4. to_body(), then body_to_wheels()
+        target_x, target_y = target
+        pose_x, pose_y, pose_yaw = pose
+
+        # compute the error in x and y directions
+        error_x = target_x - pose_x
+        error_y = target_y - pose_y
+        dist = math.sqrt(error_x * error_x + error_y * error_y)
+
+        # compute the PID control for x and y directions
+        if dist <= self.tol:
+            vx_a = 0
+            vy_a = 0
+            self.integral_y = 0.0
+            self.integral_x = 0.0
+
+        else:
+            self.integral_x += error_x * self.dt
+            self.integral_y += error_y * self.dt
+            self.integral_x = max(-self.integral_limit, min(self.integral_limit, self.integral_x))
+            self.integral_y = max(-self.integral_limit, min(self.integral_limit, self.integral_y))
+
+            deriv_x = (error_x - self.prev_error_x) / self.dt
+            deriv_y = (error_y - self.prev_error_y) / self.dt
+
+            Px = self.kp * error_x
+            Ix = self.ki * self.integral_x
+            Dx = self.kd * deriv_x
+
+            Py = self.kp * error_y
+            Iy = self.ki * self.integral_y
+            Dy = self.kd * deriv_y
+
+            vx_a = Px + Ix + Dx
+            vy_a = Py + Iy + Dy
+
+            # scale the velocity to ensure it does not exceed v_max
+            speed = math.hypot(vx_a, vy_a)
+            if speed > self.v_max:
+                scale = self.v_max / speed
+                vx_a *= scale
+                vy_a *= scale
+
+        # update previous errors for the next iteration
+        self.prev_error_x = error_x
+        self.prev_error_y = error_y
+
+        # compute the yaw error and PID control for yaw
+        error_yaw = wrap(hold_yaw - pose_yaw)
+
+        self.integral_yaw += error_yaw * self.dt
+        self.integral_yaw = max(-self.integral_limit, min(self.integral_limit, self.integral_yaw))
+
+        deriv_yaw = (error_yaw - self.prev_error_yaw) / self.dt
+        self.prev_error_yaw = error_yaw
+
+        Pwz = self.kyaw * error_yaw
+        Iwz = self.kiyaw * self.integral_yaw
+        Dwz = self.kdyaw * deriv_yaw
+
+        wz = Pwz + Iwz + Dwz
+        wz = max(-self.w_max, min(self.w_max, wz))       # cap the angular velocity to w_max
+
+        # convert arena-frame velocity to body-frame velocity and then to wheel speeds
+        vx_b, vy_b = to_body(vx_a, vy_a, pose_yaw)
+        wheels = body_to_wheels(vx_b, vy_b, wz)
+
+        return (wheels, dist) 
 
 ##################################################
 
@@ -117,10 +221,8 @@ class GoToPoint:
 
 def path_to_traj(msg):
     """nav_msgs/Path -> [(t, x, y), ...], t = pose stamp - path stamp, in s."""
-    ##############  ADD YOUR CODE HERE  ##############
     # TODO: Time.from_msg(stamp) gives a Time; (Time - Time).nanoseconds * 1e-9
     pass
-    ##################################################
 
 
 def stops_in(traj):

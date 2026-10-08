@@ -16,8 +16,8 @@
 *****************************************************************************************
 '''
 
-# Team ID:          [ Team-ID ]
-# Author List:      [ Names of team members who worked on this file, separated by comma ]
+# Team ID:          [ 3142 ]
+# Author List:      [ Shourya Gupta, Sarthak Gupta ]
 # Filename:         path_planner.py
 # Functions:        [ Add every extra helper function you write to this list ]
 # Global variables: [ Add every extra global variable you declare to this list ]
