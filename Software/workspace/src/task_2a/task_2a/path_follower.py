@@ -72,7 +72,7 @@ ORDER = ("r1", "r2", "r3")    # one node per robot
 # ----------------------------------------------------- yours to set
 # By Shourya -> ye values ko change krna confirm nhi h
 CONTROL_HZ = 20.0              # how often tick() runs
-GOAL_TOLERANCE = 0.03         # m, how close counts as "at the goal"
+GOAL_TOLERANCE = 0.02         # m, how close counts as "at the goal"
 SETTLE_TICKS = 10            # ticks in a row inside GOAL_TOLERANCE = arrived
 
 # ----------------------------------------------------- robot (same as Task 1B)
@@ -98,10 +98,10 @@ def body_velocity_to_wheel_speeds(vx, vy, w):
 def body_to_wheels(vx, vy, wz):
     """Like body_velocity_to_wheel_speeds(), but kept inside +/-_CTRL_LIMIT.
     Returns a list."""
-    raw_wheel_speeds = body_velocity_to_wheel_speeds(vx, vy, wz)
-    max_w = max(abs(w) for w in raw_wheel_speeds)
+    raw_wheel_speeds = body_velocity_to_wheel_speeds(vx, vy, wz)    # rad/s
+    max_w = max(abs(w) for w in raw_wheel_speeds)                   
     if max_w > _CTRL_LIMIT:
-        scaled_wheel_speeds = [w * (_CTRL_LIMIT / max_w) for w in raw_wheel_speeds]
+        scaled_wheel_speeds = [w * (_CTRL_LIMIT / max_w) for w in raw_wheel_speeds]  # scale down to the limit
         return scaled_wheel_speeds
     return raw_wheel_speeds
 
@@ -122,8 +122,8 @@ def to_body(vx_a, vy_a, yaw):
     """Arena-frame velocity -> body-frame velocity (vx, vy).
     Check: at yaw = -pi/2 (facing up), arena (0, -v) must give body (v, 0)."""
     ##############  ADD YOUR CODE HERE  ##############
-    vx = (vx_a * math.cos(yaw)) + (vy_a * math.sin(yaw))
-    vy = (-vx_a * math.sin(yaw)) + (vy_a * math.cos(yaw))
+    vx = (vx_a * math.cos(yaw)) + (vy_a * math.sin(yaw))                       
+    vy = (vx_a * math.sin(yaw)) - (vy_a * math.cos(yaw))
 
     return (vx, vy)
     ##################################################
@@ -169,10 +169,15 @@ class GoToPoint:
         #      capped at v_max, integral limited so it cannot wind up
         #   3. wz from a PID on wrap(hold_yaw - yaw), capped at w_max
         #   4. to_body(), then body_to_wheels()
-        error_x = target[0] - pose[0]
-        error_y = target[1] - pose[1]
+        target_x, target_y = target
+        pose_x, pose_y, pose_yaw = pose
+
+        # Compute the error in x and y directions
+        error_x = target_x - pose_x
+        error_y = target_y - pose_y
         dist = math.sqrt(error_x * error_x + error_y * error_y)
 
+        # Compute the PID control for x and y directions
         if dist <= self.tol:
             vx_a = 0
             vy_a = 0
@@ -199,16 +204,19 @@ class GoToPoint:
             vx_a = Px + Ix + Dx
             vy_a = Py + Iy + Dy
 
+            # Scale the velocity to ensure it does not exceed v_max
             speed = math.hypot(vx_a, vy_a)
             if speed > self.v_max:
                 scale = self.v_max / speed
                 vx_a *= scale
                 vy_a *= scale
 
+        # Update previous errors for the next iteration
         self.prev_error_x = error_x
         self.prev_error_y = error_y
 
-        error_yaw = wrap(hold_yaw - pose[2])
+        # Compute the yaw error and PID control for yaw
+        error_yaw = wrap(hold_yaw - pose_yaw)
 
         self.integral_yaw += error_yaw * self.dt
         self.integral_yaw = max(-self.integral_limit, min(self.integral_limit, self.integral_yaw))
@@ -221,9 +229,10 @@ class GoToPoint:
         Dwz = self.kdyaw * deriv_yaw
 
         wz = Pwz + Iwz + Dwz
-        wz = max(-self.w_max, min(self.w_max, wz))
+        wz = max(-self.w_max, min(self.w_max, wz))       # cap the angular velocity to w_max
 
-        vx_b, vy_b = to_body(vx_a, vy_a, pose[2])
+        # Convert arena-frame velocity to body-frame velocity and then to wheel speeds
+        vx_b, vy_b = to_body(vx_a, vy_a, pose_yaw)
         wheels = body_to_wheels(vx_b, vy_b, wz)
 
         return (wheels, dist) 
@@ -253,8 +262,10 @@ class RobotNode(Node):
         #     /<robot>/wheel_commands in self.pub
         #   - self.ctl = a GoToPoint for this robot
         #   - a timer calling self.tick at CONTROL_HZ
-        self.odom_sub = self.create_subscription(Odometry, f"/{self.robot}/odom", self.odom_cb, 10)
-        self.pub = self.create_publisher(Float64MultiArray, f"/{self.robot}/wheel_commands", 10)
+        self.odom_sub = self.create_subscription(Odometry, f"/{self.robot}/odom", self.odom_cb, 10) # Subscribe to odometry topic
+        self.pub = self.create_publisher(Float64MultiArray, f"/{self.robot}/wheel_commands", 10) # Create publisher for wheel commands
+
+        # Initialize the GoToPoint controller with the specified parameters
         self.ctl = GoToPoint(
             v_max=V_MAX,
             w_max=W_MAX,
@@ -266,8 +277,8 @@ class RobotNode(Node):
             kdyaw=KD_YAW,
             tol=GOAL_TOLERANCE,
             dt=1.0 / CONTROL_HZ
-            )
-        self.callback_timer = self.create_timer(1 / CONTROL_HZ, self.tick)
+            )  
+        self.callback_timer = self.create_timer(1 / CONTROL_HZ, self.tick)   # Create a timer to call the tick function at CONTROL_HZ frequency
         ##################################################
 
     def odom_cb(self, msg):
@@ -277,12 +288,21 @@ class RobotNode(Node):
         # self.robot to self.ready.
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
-        yaw = yaw_from_quat(msg.pose.pose.orientation.w, msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z)
+        yaw = yaw_from_quat(
+            msg.pose.pose.orientation.w,
+            msg.pose.pose.orientation.x,
+            msg.pose.pose.orientation.y,
+            msg.pose.pose.orientation.z
+            )
+
         self.pose = (x, y, yaw)
 
-        self.hold_yaw = yaw
-        error = frame_check(x, y)
-        self.ready.add(self.robot)
+        if self.hold_yaw is None:
+            self.hold_yaw = yaw
+            error = frame_check(x, y)
+            if error:
+                self.get_logger().warning(error)
+            self.ready.add(self.robot)
         ##################################################
 
     def send(self, wheels):
@@ -302,11 +322,12 @@ class RobotNode(Node):
         #     self.arrived, log "<robot> reached its goal (... mm out)", and
         #     call self.on_arrival(self.robot, seconds since self.t_start)
         if self.arrived:
-            self.send([0.0, 0.0, 0.0])
+            self.send([0.0, 0.0, 0.0])   # send zeros to stop the robot
             return
 
-        wheel, dist = self.ctl.step(self.pose, GOALS[self.robot], self.hold_yaw)
+        wheel, dist = self.ctl.step(self.pose, GOALS[self.robot], self.hold_yaw)  # Get wheel speeds and distance to goal
 
+        # Check if the robot is within the goal tolerance and update settled count
         if dist < GOAL_TOLERANCE:
             self.settled += 1
         else:
