@@ -127,7 +127,7 @@ def clear_circle(occupied, xy, radius):
     occupied[(x - xy[0]) ** 2 + (y - xy[1]) ** 2 <= radius ** 2] = False
 
 
-def remove_drivable(frame, occupied, robots, goals):
+def remove_drivable(frame, occupied, robots, goals): # -> Sarthak Gupta
     """Free what a robot may drive over; return the grid.
 
     frame_to_occupancy() marks everything that is not sand as an obstacle --
@@ -188,7 +188,7 @@ def nearest_free(blocked, p, max_r=0.30):
     return min(free, key=lambda q: math.dist(to_world(q), p)) if free else None
 
 
-def plan_route(blocked, start):
+def plan_route(blocked, start):   # -> Shourya Gupta
     """start -> GOALS[0] -> GOALS[1] -> GOALS[2] on `blocked`.
     Returns [(t, x, y), ...] starting with (0.0, *start), or None."""
     ##############  ADD YOUR CODE HERE  ##############
