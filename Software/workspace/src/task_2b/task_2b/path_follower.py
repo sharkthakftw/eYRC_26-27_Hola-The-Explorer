@@ -219,9 +219,8 @@ class GoToPoint:
 
 ######################### PATH ################################
 
-def path_to_traj(msg):        # -> Shourya Gupta
+def path_to_traj(msg):
     """nav_msgs/Path -> [(t, x, y), ...], t = pose stamp - path stamp, in s."""
-    # TODO: Time.from_msg(stamp) gives a Time; (Time - Time).nanoseconds * 1e-9
     path_time = Time.from_msg(msg.header.stamp)
     traj = []
     for ps in msg.poses:

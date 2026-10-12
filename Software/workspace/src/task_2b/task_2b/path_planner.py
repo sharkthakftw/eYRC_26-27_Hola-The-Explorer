@@ -133,7 +133,6 @@ def remove_drivable(frame, occupied, robots, goals): # -> Sarthak Gupta
     frame_to_occupancy() marks everything that is not sand as an obstacle --
     including the painted floor, the start circles, the robot and the goal
     dots, which leaves NO path. Keep the pillars (and each pad's payload)."""
-    ##############  ADD YOUR CODE HERE  ##############
     # TODO:
     #   - painted floor: find it by colour in crop_arena(frame) and free it
     #     (the pillars are grey, so colour separates them)
@@ -142,7 +141,7 @@ def remove_drivable(frame, occupied, robots, goals): # -> Sarthak Gupta
     cropped = crop_arena(frame)
     hsv = cv2.cvtColor(cropped, cv2.COLOR_BGR2HSV)
     s = cv2.split(hsv)[1]
-    painted_mask = s > 30
+    painted_mask = s > 25         # Tweakable
 
     painted_small = cv2.resize(painted_mask.astype(np.uint8), (GRID_CELLS, GRID_CELLS), interpolation = cv2.INTER_NEAREST) > 0
 
@@ -155,8 +154,10 @@ def remove_drivable(frame, occupied, robots, goals): # -> Sarthak Gupta
     for xy in goals:
         clear_circle(occupied, xy, ROBOT_RADIUS + 0.02)
 
+    cv2.imshow("Binary After Cleaning", np.where(occupied, 0, 255).astype(np.uint8))
+    cv2.waitKey(0)
+
     return occupied
-    ##################################################
 
 
 ######################### PLANNING GRID #######################

@@ -1,5 +1,5 @@
-*/build
-*/install
-*/log
+Software/workspace/build
+Software/workspace/install
+Software/workspace/log
 .vscode
 __pycache__
