@@ -318,7 +318,7 @@ class RobotNode(Node):
                 t = leave
         # on a stop, aim at the goal itself: LEAD would aim down the next leg
         target = goal if t >= arrive else position_at(self.traj, t + LEAD)
-        wheels, _ = self.ctl.step(self.pose, target, self.hold_yaw)
+        wheels = self.ctl.step(self.pose, target, self.hold_yaw)[0]
         self.send(wheels)
 
 

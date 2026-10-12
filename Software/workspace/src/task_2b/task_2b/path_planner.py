@@ -139,6 +139,22 @@ def remove_drivable(frame, occupied, robots, goals): # -> Sarthak Gupta
     #     (the pillars are grey, so colour separates them)
     #   - start circles, robots, goal dots: clear_circle(), with room round
     #     each goal for the whole robot
+    cropped = crop_arena(frame)
+    hsv = cv2.cvtColor(cropped, cv2.COLOR_BGR2HSV)
+    s = cv2.split(hsv)[1]
+    painted_mask = s > 30
+
+    painted_small = cv2.resize(painted_mask.astype(np.uint8), (GRID_CELLS, GRID_CELLS), interpolation = cv2.INTER_NEAREST) > 0
+
+    occupied[painted_small] = False
+
+    for xy in START_CIRCLES:
+        clear_circle(occupied, xy, ROBOT_RADIUS + 0.02)
+    for xy in robots:
+        clear_circle(occupied, xy, ROBOT_RADIUS + 0.02)
+    for xy in goals:
+        clear_circle(occupied, xy, ROBOT_RADIUS + 0.02)
+
     return occupied
     ##################################################
 
