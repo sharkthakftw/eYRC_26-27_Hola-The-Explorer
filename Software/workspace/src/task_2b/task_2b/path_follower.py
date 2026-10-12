@@ -222,8 +222,16 @@ class GoToPoint:
 def path_to_traj(msg):        # -> Shourya Gupta
     """nav_msgs/Path -> [(t, x, y), ...], t = pose stamp - path stamp, in s."""
     # TODO: Time.from_msg(stamp) gives a Time; (Time - Time).nanoseconds * 1e-9
-    pass
+    path_time = Time.from_msg(msg.header.stamp)
+    traj = []
+    for ps in msg.poses:
+        pose_time = Time.from_msg(ps.header.stamp)
+        t = (pose_time - path_time).nanoseconds * 1e-9
+        x = ps.pose.position.x
+        y = ps.pose.position.y
+        traj.append((t, x, y))
 
+    return traj
 
 def stops_in(traj):
     """Given. Goals on a timed path: [(arrive, leave, x, y), ...], in s.

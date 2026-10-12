@@ -59,7 +59,7 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry, Path
 
 ################# ADD EXTRA IMPORTS / GLOBALS HERE ############
-
+import heapq
 ###############################################################
 
 
@@ -198,7 +198,114 @@ def plan_route(blocked, start):   # -> Shourya Gupta
     #   2. straighten the zig-zags where the straight line is clear
     #   3. t = distance so far / PLAN_SPEED; on each goal add its point again
     #      at t + GOAL_STOP; end exactly on each goal
-    pass
+    def astar(blocked, src, dist):
+        open_heap = []
+
+        h = lambda c: math.dist(to_world(c), to_world(dist))
+        heapq.heappush(open_heap, (h(src), 0, src))
+
+        came_from = {src: None}
+        g_score = {src: 0.0}
+
+        while open_heap:
+            _, cost, curr = heapq.heappop(open_heap)
+
+            if curr == dist:
+                path = []
+
+                while curr is not None:
+                    path.append(curr)
+                    curr = came_from[curr]
+                return path[::-1]
+
+            ni, nj = curr
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    if di == 0 and dj == 0:
+                        continue
+
+                    nb = (ni + di, nj + dj)
+                    if not (0 <= nb[0] < blocked.shape[0] and 0 <= nb[1] < blocked.shape[1]):
+                        continue
+                    if blocked[nb]:
+                        continue
+
+                    step = math.sqrt(di ** 2 + dj ** 2) * PLAN_CELL
+                    ng = cost + step
+                    if ng < g_score.get(nb, float('inf')):
+                        g_score[nb] = ng  
+                        came_from[nb] = curr
+                        heapq.heappush(open_heap, (ng + h(nb), ng, nb))
+
+        return None    
+
+    def line_clear(blocked, c0, c1):
+        pts = max(abs(c1[0] - c0[0]), abs(c1[1] - c0[1])) * 2 + 1
+
+        for k in range(int(pts) + 1):
+            u = k / pts
+            ci = int(round(c0[0] + (c1[0] - c0[0]) * u))
+            cj = int(round(c0[1] + (c1[1] - c0[1]) * u))
+
+            ci = max(0, min(ci, blocked.shape[0] - 1))
+            cj = max(0, min(cj, blocked.shape[1] - 1))
+
+            if blocked[ci, cj]:
+                return False
+
+        return True
+
+    def smooth(cells, blocked):
+        if len(cells) <= 2:
+            return cells
+
+        result = [cells[0]]
+        i = 0
+
+        while i < len(cells) - 1:
+            j = len(cells) - 1
+            while j > i + 1:
+                if line_clear(blocked, cells[i], cells[j]):
+                    break
+                j -= 1
+            result.append(cells[j])
+            i = j
+
+        return result
+
+    waypoints = [to_world(nearest_free(blocked, start))]
+    t = 0.0
+    plan = [(0.0, *waypoints[0])]
+    prev_xy = waypoints[0]
+
+    for goal in GOALS:
+        src_cell = nearest_free(blocked, prev_xy)
+        dst_cell = nearest_free(blocked, goal)
+
+        if src_cell is None or dst_cell is None:
+            return None
+        
+        cells = astar(blocked, src_cell, dst_cell)
+
+        if cells is None:
+            return None
+        
+        cells = smooth(cells, blocked)
+
+        for cell in cells[1:]:
+            xy = to_world(cell)
+            t += math.dist(prev_xy, xy) / PLAN_SPEED
+            plan.append((t, *xy))
+            prev_xy = xy
+
+        t += math.dist(prev_xy, goal) / PLAN_SPEED
+        plan.append((t, *goal))
+        t += GOAL_STOP
+        plan.append((t, *goal))
+        prev_xy = goal
+
+    return plan
+
     ##################################################
 
 
@@ -229,7 +336,20 @@ class PathPlanner(Node):
         ##############  ADD YOUR CODE HERE  ##############
         # TODO: frame_id "odom" on the path and each PoseStamped; path stamp =
         # start, each pose's stamp = start + Duration(seconds=t) (.to_msg()).
-        pass
+        path = Path()
+        path.header.frame_id = "odom"
+        path.header.stamp = start.to_msg()
+
+        for t, x, y in plan:
+            ps = PoseStamped()
+            ps.header.frame_id = "odom"
+            ps.header.stamp = (start + Duration(seconds = t)).to_msg()
+
+            ps.pose.position.x = x
+            ps.pose.position.y = y
+
+            path.poses.append(ps)
+        return path
         ##################################################
 
     def tick(self):
