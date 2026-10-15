@@ -74,10 +74,6 @@ _CTRL_LIMIT = 30.0            # rad/s, the wheels' ctrlrange in the robot's MJCF
 
 
 ######################### FROM TASK 2A ########################
-## Paste your Task 2A functions and GoToPoint here, unchanged.##
-###############################################################
-
-##############  ADD YOUR CODE HERE  ##############
 
 def body_velocity_to_wheel_speeds(vx, vy, w):
     """Body twist (vx, vy, w) -> wheel speeds [left, right, back], rad/s."""

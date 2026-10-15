@@ -127,25 +127,26 @@ def clear_circle(occupied, xy, radius):
     occupied[(x - xy[0]) ** 2 + (y - xy[1]) ** 2 <= radius ** 2] = False
 
 
-def remove_drivable(frame, occupied, robots, goals): # -> Sarthak Gupta
+def remove_drivable(frame, occupied, robots, goals):
     """Free what a robot may drive over; return the grid.
 
     frame_to_occupancy() marks everything that is not sand as an obstacle --
     including the painted floor, the start circles, the robot and the goal
     dots, which leaves NO path. Keep the pillars (and each pad's payload)."""
-    # TODO:
-    #   - painted floor: find it by colour in crop_arena(frame) and free it
-    #     (the pillars are grey, so colour separates them)
-    #   - start circles, robots, goal dots: clear_circle(), with room round
-    #     each goal for the whole robot
+
     cropped = crop_arena(frame)
     hsv = cv2.cvtColor(cropped, cv2.COLOR_BGR2HSV)
-    s = cv2.split(hsv)[1]
-    painted_mask = s > 25         # Tweakable
+    saturation = cv2.split(hsv)[1]
+    painted_mask = saturation > 35
 
-    painted_small = cv2.resize(painted_mask.astype(np.uint8), (GRID_CELLS, GRID_CELLS), interpolation = cv2.INTER_NEAREST) > 0
+    # majority vote downsampling
+    painted = cv2.morphologyEx(painted_mask.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    frac = cv2.resize(painted.astype(np.float32), (GRID_CELLS, GRID_CELLS), interpolation=cv2.INTER_AREA)
+    occupied[frac > 0.5] = False
 
-    occupied[painted_small] = False
+    # remove lines and specks
+    occ = occupied.astype(np.uint8)
+    occ = cv2.morphologyEx(occ, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
     for xy in START_CIRCLES:
         clear_circle(occupied, xy, ROBOT_RADIUS + 0.02)
@@ -153,9 +154,6 @@ def remove_drivable(frame, occupied, robots, goals): # -> Sarthak Gupta
         clear_circle(occupied, xy, ROBOT_RADIUS + 0.02)
     for xy in goals:
         clear_circle(occupied, xy, ROBOT_RADIUS + 0.02)
-
-    cv2.imshow("Binary After Cleaning", np.where(occupied, 0, 255).astype(np.uint8))
-    cv2.waitKey(0)
 
     return occupied
 
@@ -205,21 +203,15 @@ def nearest_free(blocked, p, max_r=0.30):
     return min(free, key=lambda q: math.dist(to_world(q), p)) if free else None
 
 
-def plan_route(blocked, start):   # -> Shourya Gupta
+def plan_route(blocked, start):
     """start -> GOALS[0] -> GOALS[1] -> GOALS[2] on `blocked`.
     Returns [(t, x, y), ...] starting with (0.0, *start), or None."""
-    ##############  ADD YOUR CODE HERE  ##############
-    # TODO:
-    #   1. each leg: search the grid between two cells (A* is a good start;
-    #      nearest_free() gives a free start/end cell)
-    #   2. straighten the zig-zags where the straight line is clear
-    #   3. t = distance so far / PLAN_SPEED; on each goal add its point again
-    #      at t + GOAL_STOP; end exactly on each goal
-    def astar(blocked, src, dist):
+
+    def a_star(blocked, src, dist):
         open_heap = []
 
-        h = lambda c: math.dist(to_world(c), to_world(dist))
-        heapq.heappush(open_heap, (h(src), 0, src))
+        heuristic = lambda c: math.hypot(c[0] - dist[0], c[1] - dist[1]) * PLAN_CELL
+        heapq.heappush(open_heap, (heuristic(src), 0, src))
 
         came_from = {src: None}
         g_score = {src: 0.0}
@@ -241,22 +233,22 @@ def plan_route(blocked, start):   # -> Shourya Gupta
                     if di == 0 and dj == 0:
                         continue
 
-                    nb = (ni + di, nj + dj)
-                    if not (0 <= nb[0] < blocked.shape[0] and 0 <= nb[1] < blocked.shape[1]):
+                    neighbour = (ni + di, nj + dj)
+                    if not (0 <= neighbour[0] < blocked.shape[0] and 0 <= neighbour[1] < blocked.shape[1]):
                         continue
-                    if blocked[nb]:
+                    if blocked[neighbour]:
                         continue
 
                     step = math.sqrt(di ** 2 + dj ** 2) * PLAN_CELL
                     ng = cost + step
-                    if ng < g_score.get(nb, float('inf')):
-                        g_score[nb] = ng  
-                        came_from[nb] = curr
-                        heapq.heappush(open_heap, (ng + h(nb), ng, nb))
+                    if ng < g_score.get(neighbour, float('inf')):
+                        g_score[neighbour] = ng  
+                        came_from[neighbour] = curr
+                        heapq.heappush(open_heap, (ng + heuristic(neighbour), ng, neighbour))
 
         return None    
 
-    def line_clear(blocked, c0, c1):
+    def is_line_clear(blocked, c0, c1):
         pts = max(abs(c1[0] - c0[0]), abs(c1[1] - c0[1])) * 2 + 1
 
         for k in range(int(pts) + 1):
@@ -277,16 +269,16 @@ def plan_route(blocked, start):   # -> Shourya Gupta
             return cells
 
         result = [cells[0]]
-        i = 0
+        anchor_idx = 0
 
-        while i < len(cells) - 1:
-            j = len(cells) - 1
-            while j > i + 1:
-                if line_clear(blocked, cells[i], cells[j]):
+        while anchor_idx < len(cells) - 1:
+            far_idx = len(cells) - 1
+            while far_idx > anchor_idx + 1:
+                if is_line_clear(blocked, cells[anchor_idx], cells[far_idx]):
                     break
-                j -= 1
-            result.append(cells[j])
-            i = j
+                far_idx -= 1
+            result.append(cells[far_idx])
+            anchor_idx = far_idx
 
         return result
 
@@ -302,7 +294,7 @@ def plan_route(blocked, start):   # -> Shourya Gupta
         if src_cell is None or dst_cell is None:
             return None
         
-        cells = astar(blocked, src_cell, dst_cell)
+        cells = a_star(blocked, src_cell, dst_cell)
 
         if cells is None:
             return None
