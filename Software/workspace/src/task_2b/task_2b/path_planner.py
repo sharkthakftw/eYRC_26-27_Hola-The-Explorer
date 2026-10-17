@@ -134,19 +134,19 @@ def remove_drivable(frame, occupied, robots, goals):
     including the painted floor, the start circles, the robot and the goal
     dots, which leaves NO path. Keep the pillars (and each pad's payload)."""
 
+    # free the painted floor
+    # the obstacles have low saturation
     cropped = crop_arena(frame)
     hsv = cv2.cvtColor(cropped, cv2.COLOR_BGR2HSV)
     saturation = cv2.split(hsv)[1]
-    painted_mask = saturation > 35
+    painted_mask = saturation > 30
 
-    # majority vote downsampling
-    painted = cv2.morphologyEx(painted_mask.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    painted = painted_mask.astype(np.uint8)
     frac = cv2.resize(painted.astype(np.float32), (GRID_CELLS, GRID_CELLS), interpolation=cv2.INTER_AREA)
-    occupied[frac > 0.5] = False
+    occupied[frac > 0.65] = False
 
     # remove lines and specks
-    occ = occupied.astype(np.uint8)
-    occ = cv2.morphologyEx(occ, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    occupied = cv2.morphologyEx(occupied.astype(np.uint8), cv2.MORPH_OPEN, np.ones((2, 2), np.uint8)).astype(bool)
 
     for xy in START_CIRCLES:
         clear_circle(occupied, xy, ROBOT_RADIUS + 0.02)
@@ -154,6 +154,13 @@ def remove_drivable(frame, occupied, robots, goals):
         clear_circle(occupied, xy, ROBOT_RADIUS + 0.02)
     for xy in goals:
         clear_circle(occupied, xy, ROBOT_RADIUS + 0.02)
+
+    # hard = occupied.copy()
+    # for xy in goals:
+    #     disc = np.ones_like(occupied)
+    #     clear_circle(disc, xy, ROBOT_RADIUS + 0.02)   # false inside the disc
+    #     disc = ~disc
+    #     occupied[disc] = hard[disc]
 
     return occupied
 
