@@ -349,9 +349,6 @@ class PathPlanner(Node):
 
     def to_path_msg(self, plan, start):
         """[(t, x, y), ...] and start (rclpy Time) -> nav_msgs/Path."""
-        ##############  ADD YOUR CODE HERE  ##############
-        # TODO: frame_id "odom" on the path and each PoseStamped; path stamp =
-        # start, each pose's stamp = start + Duration(seconds=t) (.to_msg()).
         path = Path()
         path.header.frame_id = "odom"
         path.header.stamp = start.to_msg()
@@ -366,7 +363,6 @@ class PathPlanner(Node):
 
             path.poses.append(ps)
         return path
-        ##################################################
 
     def tick(self):
         if self.planned or len(self.pose) < len(ROBOTS):

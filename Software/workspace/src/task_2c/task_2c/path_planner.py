@@ -16,8 +16,8 @@
 *****************************************************************************************
 '''
 
-# Team ID:          [ Team-ID ]
-# Author List:      [ Names of team members who worked on this file, separated by comma ]
+# Team ID:          [ 3142 ]
+# Author List:      [ Sarthak Gupta, Shourya Gupta ]
 # Filename:         path_planner.py
 # Functions:        [ Add every extra helper function you write to this list ]
 # Global variables: [ Add every extra global variable you declare to this list ]
@@ -134,9 +134,27 @@ def remove_drivable(frame, occupied, robots, goals):
     frame_to_occupancy() marks everything that is not sand as an obstacle --
     including the painted floor, the robots and the goal dots, which leaves
     NO path. Keep the wall and pillars (and each pad's payload)."""
-    ##############  ADD YOUR CODE HERE  ##############
-    # TODO: from Task 2B. Check it here: the gap, every start and every goal
-    # must come out free.
+    # free the painted floor
+    # the obstacles have low saturation
+    cropped = crop_arena(frame)
+    hsv = cv2.cvtColor(cropped, cv2.COLOR_BGR2HSV)
+    saturation = cv2.split(hsv)[1]
+    painted_mask = saturation > 30
+
+    painted = painted_mask.astype(np.uint8)
+    frac = cv2.resize(painted.astype(np.float32), (GRID_CELLS, GRID_CELLS), interpolation=cv2.INTER_AREA)
+    occupied[frac > 0.65] = False
+
+    # remove lines and specks
+    occupied = cv2.morphologyEx(occupied.astype(np.uint8), cv2.MORPH_OPEN, np.ones((2, 2), np.uint8)).astype(bool)
+
+    for xy in START_CIRCLES:
+        clear_circle(occupied, xy, ROBOT_RADIUS + 0.02)
+    for xy in robots:
+        clear_circle(occupied, xy, ROBOT_RADIUS + 0.02)
+    for xy in goals:
+        clear_circle(occupied, xy, ROBOT_RADIUS + 0.02)
+
     return occupied
     ##################################################
 
@@ -224,10 +242,21 @@ class PathPlanner(Node):
 
     def to_path_msg(self, plan, start):
         """[(t, x, y), ...] and start (rclpy Time) -> nav_msgs/Path."""
-        ##############  ADD YOUR CODE HERE  ##############
-        # TODO: from Task 2B
-        pass
-        ##################################################
+        # from Task 2B
+        path = Path()
+        path.header.frame_id = "odom"
+        path.header.stamp = start.to_msg()
+
+        for t, x, y in plan:
+            ps = PoseStamped()
+            ps.header.frame_id = "odom"
+            ps.header.stamp = (start + Duration(seconds = t)).to_msg()
+
+            ps.pose.position.x = x
+            ps.pose.position.y = y
+
+            path.poses.append(ps)
+        return path
 
     def tick(self):
         if self.planned or len(self.pose) < len(ROBOTS):
