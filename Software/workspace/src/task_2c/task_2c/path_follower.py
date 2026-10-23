@@ -52,7 +52,8 @@ from nav_msgs.msg import Odometry, Path
 from std_msgs.msg import Float64MultiArray
 
 ################# ADD EXTRA IMPORTS / GLOBALS HERE ############
-
+KP_POS, KI_POS, KD_POS = 2.5, 0.0, 0.15
+KP_YAW, KI_YAW, KD_YAW = 3.0, 0.0, 0.1
 ###############################################################
 
 
@@ -122,8 +123,10 @@ class GoToPoint:
     GoToPoint(v_max=0.30, tol=0.012, dt=1.0 / CONTROL_HZ), so make your TUNED
     gains the defaults -- zero gains do nothing."""
 
-    def __init__(self, v_max=0.0, w_max=0.0, kp=0.0, ki=0.0, kd=0.0,
-                 kyaw=0.0, kiyaw=0.0, kdyaw=0.0, tol=0.0, dt=0.0):
+    def __init__(self, v_max=0.0, w_max=2.0,
+             kp=KP_POS, ki=KI_POS, kd=KD_POS,
+             kyaw=KP_YAW, kiyaw=KI_YAW, kdyaw=KD_YAW,
+             tol=0.0, dt=0.0):
         self.v_max, self.w_max = v_max, w_max            # m/s, rad/s caps
         self.kp, self.ki, self.kd = kp, ki, kd           # position PID
         self.kyaw, self.kiyaw, self.kdyaw = kyaw, kiyaw, kdyaw   # yaw PID

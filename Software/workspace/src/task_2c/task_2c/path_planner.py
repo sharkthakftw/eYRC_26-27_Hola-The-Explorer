@@ -19,7 +19,7 @@
 # Team ID:          [ 3142 ]
 # Author List:      [ Sarthak Gupta, Shourya Gupta ]
 # Filename:         path_planner.py
-# Functions:        [ Add every extra helper function you write to this list ]
+# Functions:        [ footprint, heuristic ]
 # Global variables: [ Add every extra global variable you declare to this list ]
 
 
@@ -60,7 +60,7 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry, Path
 
 ################# ADD EXTRA IMPORTS / GLOBALS HERE ############
-
+import heapq
 ###############################################################
 
 
@@ -205,16 +205,129 @@ def nearest_free(blocked, p, max_r=0.30):
 
 
 def plan_all(blocked, starts):
-    """starts {robot: (x, y)} -> {robot: [(t, x, y), ...]}, every robot from
-    (0.0, *starts[robot]) to exactly GOALS[robot], with no collisions; or None."""
-    ##############  ADD YOUR CODE HERE  ##############
-    # TODO (prioritised planning is a good start):
-    #   1. search over (cell, time step); a robot may move OR wait. One step
-    #      takes PLAN_CELL / PLAN_SPEED seconds
-    #   2. plan robots in ROBOTS order. After each, reserve the cells within
-    #      ROBOT_CLEARANCE of it at every step; later robots avoid them
-    #   3. no head-on swaps, and a robot parked on its goal stays reserved
-    pass
+    step_time = PLAN_CELL / PLAN_SPEED
+    max_steps = 600
+
+    cell_radius = int(math.ceil(ROBOT_CLEARANCE / PLAN_CELL))
+    offsets = [
+        (di, dj)
+        for di in range(-cell_radius, cell_radius + 1)
+        for dj in range(-cell_radius, cell_radius + 1)
+        if math.hypot(di * PLAN_CELL, dj * PLAN_CELL) <= ROBOT_CLEARANCE
+    ]
+
+    def footprint(cell):
+        cells = set()
+        for di, dj in offsets:
+            i = cell[0] + di
+            j = cell[1] + dj
+            if 0 <= i < blocked.shape[0] and 0 <= j < blocked.shape[1]:
+                cells.add((i, j))
+        return cells
+
+    reserved_cells = [set() for _ in range(max_steps + 1)]
+    reserved_edges = [set() for _ in range(max_steps)]
+    plans = {}
+
+    for robot in ROBOTS:
+        start = starts[robot]
+        goal = GOALS[robot]
+        start_cell = nearest_free(blocked, start)
+        goal_cell = to_cell(goal)
+
+        if start_cell is None or blocked[goal_cell]:
+            return None
+        if start_cell in reserved_cells[0]:
+            return None
+
+        def heuristic(cell):
+            return abs(cell[0] - goal_cell[0]) + abs(cell[1] - goal_cell[1])
+
+        start_state = (start_cell, 0)
+        frontier = [(heuristic(start_cell), 0, start_state)]
+        came_from = {start_state: None}
+        final_state = None
+
+        while frontier:
+            _, _, state = heapq.heappop(frontier)
+            cell, time_step = state
+
+            if cell == goal_cell:
+                final_state = state
+                break
+
+            if time_step >= max_steps:
+                continue
+
+            next_time = time_step + 1
+            i, j = cell
+            neighbours = (
+                (i, j),  # wait
+                (i - 1, j),
+                (i + 1, j),
+                (i, j - 1),
+                (i, j + 1),
+            )
+
+            for next_cell in neighbours:
+                ni, nj = next_cell
+                if not (0 <= ni < blocked.shape[0] and 0 <= nj < blocked.shape[1]):
+                    continue
+                if blocked[next_cell]:
+                    continue
+                if next_cell in reserved_cells[next_time]:
+                    continue
+                if (next_cell, cell) in reserved_edges[time_step]:
+                    continue
+
+                next_state = (next_cell, next_time)
+
+                # Skip states already discovered; add new states to the search.
+                if next_state in came_from:
+                    continue
+
+                came_from[next_state] = state
+                priority = next_time + heuristic(next_cell)
+                heapq.heappush(
+                    frontier,
+                    (priority, next_time, next_state),
+                )
+
+        if final_state is None:
+            return None
+
+        route = []
+        state = final_state
+        while state is not None:
+            route.append(state[0])
+            state = came_from[state]
+        route.reverse()
+
+        timed_plan = [(0.0, start[0], start[1])]
+
+        for index, cell in enumerate(route[1:], start=1):
+            x, y = to_world(cell)
+            timed_plan.append((index * step_time, x, y))
+
+        last_time = (len(route) - 1) * step_time
+        last_x, last_y = to_world(route[-1])
+        goal_time = last_time + math.dist((last_x, last_y), goal) / PLAN_SPEED
+        timed_plan.append((goal_time, goal[0], goal[1]))
+        plans[robot] = timed_plan
+
+        # Reserve this robot's route and keep its goal reserved after arrival.
+        for time_step in range(max_steps + 1):
+            route_index = min(time_step, len(route) - 1)
+            cell = route[route_index]
+            reserved_cells[time_step].update(footprint(cell))
+
+            if time_step < max_steps:
+                next_index = min(time_step + 1, len(route) - 1)
+                next_cell = route[next_index]
+                reserved_edges[time_step].add((cell, next_cell))
+
+    return plans
+
     ##################################################
 
 
