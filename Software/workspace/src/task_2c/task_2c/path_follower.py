@@ -52,7 +52,7 @@ from nav_msgs.msg import Odometry, Path
 from std_msgs.msg import Float64MultiArray
 
 ################# ADD EXTRA IMPORTS / GLOBALS HERE ############
-KP_POS, KI_POS, KD_POS = 2.5, 0.0, 0.15
+KP_POS, KI_POS, KD_POS = 2.5, 0.0, 0.12
 KP_YAW, KI_YAW, KD_YAW = 3.0, 0.0, 0.1
 ###############################################################
 

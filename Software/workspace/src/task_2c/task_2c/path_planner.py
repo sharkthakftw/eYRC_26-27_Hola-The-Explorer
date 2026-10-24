@@ -19,7 +19,7 @@
 # Team ID:          [ 3142 ]
 # Author List:      [ Sarthak Gupta, Shourya Gupta ]
 # Filename:         path_planner.py
-# Functions:        [ footprint, heuristic ]
+# Functions:        [ footprint, heuristic, simultaneous_segment_distance ]
 # Global variables: [ Add every extra global variable you declare to this list ]
 
 
@@ -83,8 +83,8 @@ SAND_LOW, SAND_HIGH = (10, 40, 170), (30, 120, 255)      # sand colour, HSV
 
 # ----------------------------------------------------- planning (tunable)
 PLAN_CELL = 0.04                     # m, planning grid cell
-PLAN_SPEED = 0.24                    # m/s, the speed the paths are timed at
-ROBOT_CLEARANCE = 0.26               # m, keep two robots' plans this far apart
+PLAN_SPEED = 0.30                    # m/s, the speed the paths are timed at
+ROBOT_CLEARANCE = 0.30              # m, keep two robots' plans this far apart
 START_DELAY = 2.0                    # s, from publishing to setting off
 
 LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -205,9 +205,11 @@ def nearest_free(blocked, p, max_r=0.30):
 
 
 def plan_all(blocked, starts):
+    # Search in discrete time so a robot can wait for a reserved area to clear.
     step_time = PLAN_CELL / PLAN_SPEED
     max_steps = 600
 
+    # Reserve a safety-radius footprint around each planned robot position.
     cell_radius = int(math.ceil(ROBOT_CLEARANCE / PLAN_CELL))
     offsets = [
         (di, dj)
@@ -215,6 +217,29 @@ def plan_all(blocked, starts):
         for dj in range(-cell_radius, cell_radius + 1)
         if math.hypot(di * PLAN_CELL, dj * PLAN_CELL) <= ROBOT_CLEARANCE
     ]
+
+    def simultaneous_segment_distance(a0, a1, b0, b1):
+        """Closest separation while both robots traverse one time interval."""
+        a0 = np.asarray(to_world(a0), dtype=float)
+        a1 = np.asarray(to_world(a1), dtype=float)
+        b0 = np.asarray(to_world(b0), dtype=float)
+        b1 = np.asarray(to_world(b1), dtype=float)
+
+        relative_start = a0 - b0
+        relative_motion = (a1 - a0) - (b1 - b0)
+        motion_squared = float(np.dot(relative_motion, relative_motion))
+
+        if motion_squared == 0.0:
+            return float(np.linalg.norm(relative_start))
+
+        # Find the point in the interval where relative positions are closest.
+        fraction = np.clip(
+            -float(np.dot(relative_start, relative_motion)) / motion_squared,
+            0.0,
+            1.0,
+        )
+        closest = relative_start + fraction * relative_motion
+        return float(np.linalg.norm(closest))
 
     def footprint(cell):
         cells = set()
@@ -225,8 +250,9 @@ def plan_all(blocked, starts):
                 cells.add((i, j))
         return cells
 
+    # Later robots avoid earlier robots' positions and movements at each step.
     reserved_cells = [set() for _ in range(max_steps + 1)]
-    reserved_edges = [set() for _ in range(max_steps)]
+    reserved_edges = [[] for _ in range(max_steps)]
     plans = {}
 
     for robot in ROBOTS:
@@ -262,7 +288,7 @@ def plan_all(blocked, starts):
             next_time = time_step + 1
             i, j = cell
             neighbours = (
-                (i, j),  # wait
+                (i, j),  # Staying in place lets the robot wait for a reservation.
                 (i - 1, j),
                 (i + 1, j),
                 (i, j - 1),
@@ -277,7 +303,14 @@ def plan_all(blocked, starts):
                     continue
                 if next_cell in reserved_cells[next_time]:
                     continue
-                if (next_cell, cell) in reserved_edges[time_step]:
+                # Check the whole move interval, not just its two endpoints.
+                too_close = any(
+                    simultaneous_segment_distance(
+                        cell, next_cell, other_start, other_end
+                    ) < ROBOT_CLEARANCE
+                    for other_start, other_end in reserved_edges[time_step]
+                )
+                if too_close:
                     continue
 
                 next_state = (next_cell, next_time)
@@ -315,7 +348,7 @@ def plan_all(blocked, starts):
         timed_plan.append((goal_time, goal[0], goal[1]))
         plans[robot] = timed_plan
 
-        # Reserve this robot's route and keep its goal reserved after arrival.
+        # Reserve the robot's footprint and movement; keep its goal reserved after arrival.
         for time_step in range(max_steps + 1):
             route_index = min(time_step, len(route) - 1)
             cell = route[route_index]
@@ -324,7 +357,7 @@ def plan_all(blocked, starts):
             if time_step < max_steps:
                 next_index = min(time_step + 1, len(route) - 1)
                 next_cell = route[next_index]
-                reserved_edges[time_step].add((cell, next_cell))
+                reserved_edges[time_step].append((cell, next_cell))
 
     return plans
 
