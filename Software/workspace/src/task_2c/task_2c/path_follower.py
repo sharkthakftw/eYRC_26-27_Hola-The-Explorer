@@ -274,6 +274,7 @@ class RobotNode(Node):
         self.pub = self.create_publisher(Float64MultiArray, f"/{robot}/wheel_commands", 10)
         self.ctl = GoToPoint(v_max=0.30, tol=0.012, dt=1.0 / CONTROL_HZ)
         self.create_timer(1.0 / CONTROL_HZ, self.tick)
+        self.start_logged = False
 
     def on_odom(self, msg):
         p = msg.pose.pose.position
@@ -301,6 +302,9 @@ class RobotNode(Node):
         if now < 0:                             # not the start time yet
             self.send((0.0, 0.0, 0.0))
             return
+        if not self.start_logged:
+            self.start_logged = True
+            self.get_logger().info("%s started moving at t=%.1fs" % (self.robot, now))
         t = now - self.held                     # where on the path the robot should be
         arrive, leave, *goal = self.stops[self.reached]
         to_go = math.dist(self.pose[:2], goal)

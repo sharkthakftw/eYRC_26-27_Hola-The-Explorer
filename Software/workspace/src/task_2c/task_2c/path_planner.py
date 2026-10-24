@@ -84,7 +84,7 @@ SAND_LOW, SAND_HIGH = (10, 40, 170), (30, 120, 255)      # sand colour, HSV
 # ----------------------------------------------------- planning (tunable)
 PLAN_CELL = 0.04                     # m, planning grid cell
 PLAN_SPEED = 0.30                    # m/s, the speed the paths are timed at
-ROBOT_CLEARANCE = 0.30              # m, keep two robots' plans this far apart
+ROBOT_CLEARANCE = 0.26              # m, keep two robots' plans this far apart
 START_DELAY = 2.0                    # s, from publishing to setting off
 
 LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -139,7 +139,7 @@ def remove_drivable(frame, occupied, robots, goals):
     cropped = crop_arena(frame)
     hsv = cv2.cvtColor(cropped, cv2.COLOR_BGR2HSV)
     saturation = cv2.split(hsv)[1]
-    painted_mask = saturation > 30
+    painted_mask = saturation > 31
 
     painted = painted_mask.astype(np.uint8)
     frac = cv2.resize(painted.astype(np.float32), (GRID_CELLS, GRID_CELLS), interpolation=cv2.INTER_AREA)
