@@ -92,7 +92,7 @@ def body_to_wheels(vx, vy, wz):
     """Like body_velocity_to_wheel_speeds(), but kept inside +/-_CTRL_LIMIT.
     Returns a list."""
     raw_wheel_speeds = body_velocity_to_wheel_speeds(vx, vy, wz)    # rad/s
-    max_w = max(abs(w) for w in raw_wheel_speeds)                   
+    max_w = max(abs(w) for w in raw_wheel_speeds)
     if max_w > _CTRL_LIMIT:
         scaled_wheel_speeds = [w * (_CTRL_LIMIT / max_w) for w in raw_wheel_speeds]  # scale down to the limit
         return scaled_wheel_speeds
@@ -112,7 +112,7 @@ def wrap(a):
 def to_body(vx_a, vy_a, yaw):
     """Arena-frame velocity -> body-frame velocity (vx, vy).
     Check: at yaw = -pi/2 (facing up), arena (0, -v) must give body (v, 0)."""
-    vx = (vx_a * math.cos(yaw)) + (vy_a * math.sin(yaw))                       
+    vx = (vx_a * math.cos(yaw)) + (vy_a * math.sin(yaw))
     vy = (-vx_a * math.sin(yaw)) + (vy_a * math.cos(yaw))
 
     return (vx, vy)
@@ -214,7 +214,7 @@ class GoToPoint:
         vx_b, vy_b = to_body(vx_a, vy_a, pose_yaw)
         wheels = body_to_wheels(vx_b, vy_b, wz)
 
-        return (wheels, dist) 
+        return (wheels, dist)
 
 ##################################################
 

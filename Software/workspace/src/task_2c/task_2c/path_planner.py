@@ -220,10 +220,10 @@ def plan_all(blocked, starts):
 
     def simultaneous_segment_distance(a0, a1, b0, b1):
         """Closest separation while both robots traverse one time interval."""
-        a0 = np.asarray(to_world(a0), dtype=float)
-        a1 = np.asarray(to_world(a1), dtype=float)
-        b0 = np.asarray(to_world(b0), dtype=float)
-        b1 = np.asarray(to_world(b1), dtype=float)
+        a0 = np.asarray(to_world(a0), dtype=float) # robot A's current cell
+        a1 = np.asarray(to_world(a1), dtype=float) # robot A's next cell
+        b0 = np.asarray(to_world(b0), dtype=float) # robot B's current cell
+        b1 = np.asarray(to_world(b1), dtype=float) # robot B's next cell
 
         relative_start = a0 - b0
         relative_motion = (a1 - a0) - (b1 - b0)
