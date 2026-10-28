@@ -1,0 +1,18 @@
+# Weld one payload to the robot base (bridge_node's /attach_payload).
+# Refused unless the payload's center is within the node's attach distance
+# limit (the attach_max_distance parameter, default 0.30 m), refused unless
+# the robot is facing it -- the payload's centre within the attach_max_angle
+# parameter (default 20 deg) either side of the red arrow on the robot's top
+# plate -- refused unless the robot is right up against it when the
+# attach_max_gap parameter is set (task3a: the robot's front within 0.05 m of
+# the payload), and refused if that payload, or any other, is already attached.
+# A weld named "weld_<payload_name>" (body1=robot base, body2=payload_name)
+# must exist in the loaded model; see task3a.xml.
+#
+# Release it again with hb_description/srv/DetachPayload.
+
+string payload_name   # e.g. "payload_alpha"
+---
+bool success
+string message
+float64 distance      # robot-to-payload center distance at the time of the call, in metres

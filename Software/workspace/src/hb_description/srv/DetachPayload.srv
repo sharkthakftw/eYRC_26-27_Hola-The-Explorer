@@ -1,0 +1,11 @@
+# Release a payload welded by /attach_payload (bridge_node's /detach_payload).
+#
+# Leave payload_name empty to drop whatever is currently attached -- the robot
+# can only ever hold one payload, so that is unambiguous and saves the caller
+# from tracking which one it picked up.
+
+string payload_name   # e.g. "payload_alpha"; empty = whatever is attached now
+---
+bool success
+string message
+string detached_name  # which payload was actually released ("" if none was)

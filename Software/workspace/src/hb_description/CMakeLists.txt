@@ -7,6 +7,13 @@ cmake_minimum_required(VERSION 3.8)
 project(hb_description)
 
 find_package(ament_cmake REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "srv/AttachPayload.srv"
+  "srv/DetachPayload.srv"
+)
+
 install(PROGRAMS
   bin/task1a_bridge
   bin/task1a_camera
@@ -18,6 +25,10 @@ install(PROGRAMS
   bin/task2b_camera
   bin/task2c_bridge
   bin/task2c_camera
+  bin/task3a_bridge
+  bin/task3a_camera
+  bin/task3b_bridge
+  bin/task3b_camera
   bin/camera_stream
   DESTINATION lib/${PROJECT_NAME})
 

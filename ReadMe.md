@@ -71,6 +71,9 @@ Stage 1 runs entirely in simulation; hardware arrives in Stage 2.
 | **2A** | Three robots, three goals: multi-robot control |    20     |
 | **2B** | Path planning around obstacles                 |    30     |
 | **2C** | Multi-robot planning without collisions        |    50     |
+| **3A** | Deliver the payload: one robot, one payload    |    30     |
+| **3B** | Push together: three robots, one payload       |    50     |
+| **3C** | Video viva for the entire team                 |    20     |
 
 ---
 
@@ -92,7 +95,11 @@ Stage 1 runs entirely in simulation; hardware arrives in Stage 2.
             ├── task_2b/task_2b/path_planner.py
             ├── task_2b/task_2b/path_follower.py
             ├── task_2c/task_2c/path_planner.py
-            └── task_2c/task_2c/path_follower.py
+            ├── task_2c/task_2c/path_follower.py
+            ├── task_3a/task_3a/path_planner.py
+            ├── task_3a/task_3a/path_follower.py
+            ├── task_3b/task_3b/path_planner.py
+            └── task_3b/task_3b/path_follower.py
 ```
 
 **Build cycle (every session)**
