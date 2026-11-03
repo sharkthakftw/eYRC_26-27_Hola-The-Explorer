@@ -28,8 +28,8 @@
 #
 #   WAIT_PLAN -> APPROACH -> DOCK -> (attach) -> CARRY -> (detach) -> RETURN -> DONE
 #
-#  The robot faces right (yaw 0) for the whole task, so the crate stays in front
-#  of the arrow while carried.
+#  The robot holds the heading from the configured left-side docking slot,
+#  keeping the crate in front of the arrow while carried.
 #
 ###############################################################################
 
@@ -46,19 +46,22 @@ from std_msgs.msg import Float64MultiArray
 from hb_description.srv import AttachPayload, DetachPayload
 
 ################# ADD EXTRA IMPORTS / GLOBALS HERE ############
-KP_POS, KI_POS, KD_POS = 2.5, 0.0, 0.15
+KP_POS, KI_POS, KD_POS = 2.5, 0.05, 0.15
 KP_YAW, KI_YAW, KD_YAW = 3.0, 0.0, 0.1
 
 ROBOT = "r2"
 PAYLOAD = "payload_beta"
-SLOT = (-0.1798, 0.0)          # robot centre minus crate centre when docked
-HOLD_YAW = 0.0                 # face right (+x): the docking heading, kept all task
+CRATE_HALF_X = 0.1088
+SOLENOID_REACH = 0.070
+DOCK_GAP = 0.001
+SLOT = (-(CRATE_HALF_X + SOLENOID_REACH + DOCK_GAP), 0.0)
+HOLD_YAW = 0.0                         # face right, from the left side toward the crate
 
-V_CRUISE = 0.30                # m/s caps
+V_CRUISE = 0.32                # m/s caps
 V_CARRY = 0.20
-V_NEAR = 0.08                  # m/s, along the last SLOW_PATH metres of every path
-SLOW_PATH = 0.30               # m of path left
-V_SLOW = 0.06                  # m/s, final creep onto a goal / docking
+V_NEAR = 0.17                  # m/s, along the last SLOW_PATH metres of every path
+SLOW_PATH = 0.12               # m of path left
+V_SLOW = 0.09                  # m/s, final creep onto a goal / docking
 KP_TRACK = 4.0                 # 1/s, pull back onto the path (on top of the path's own velocity)
 ERR_HOLD = 0.05                # m, the path clock waits when the robot is this far behind it
 CTL_TOL = 0.003                # m, GoToPoint stops commanding inside this
@@ -66,10 +69,11 @@ CTL_TOL = 0.003                # m, GoToPoint stops commanding inside this
 DOCK_TOL = 0.004               # m, "on the docking point"
 CARRY_TOL = 0.005              # m, crate centre on the hexagon centre
 RETURN_TOL = 0.010             # m, back on the start circle
-SETTLE_TICKS = 15              # ticks in a row inside the tolerance
+SETTLE_TICKS = 5              # ticks in a row inside the tolerance
 
 CREEP = 0.003                  # m, nudge forward after a refused attach
-MAX_ATTACH_TRIES = 8
+MAX_ATTACH_TRIES = 25          # 25 x 3 mm = up to 75 mm of creep
+RETRY_SETTLE = 6               # ticks to settle before a RE-try (the first try waits SETTLE_TICKS)
 ###############################################################
 
 
@@ -292,6 +296,7 @@ class RobotNode(Node):
         self.pending = False
         self.attempts = 0
         self.dock_goal = None
+        self.dock_origin = None
         self.hold_goal = None
         self.t0 = None
 
@@ -353,20 +358,27 @@ class RobotNode(Node):
 
         if reply is not None and reply.success:
             self.get_logger().info("attached %s: carrying" % PAYLOAD)
+            self.get_logger().info("docking needed %.1f mm of creep (0 = camera estimate was exact)"
+                                   % (math.dist(self.dock_goal, self.dock_origin) * 1000.0))
             self.ctl.reset()
             self.settled = 0
             self.state = "WAIT_CARRY"                           # tick() starts the leg
             return
 
         msg = reply.message if reply is not None else "no reply"
+        distance = getattr(reply, "distance", None) if reply is not None else None
         self.attempts += 1
-        self.get_logger().warn("attach refused (%d/%d): %s" % (self.attempts, MAX_ATTACH_TRIES, msg))
+        self.get_logger().warn("attach refused (%d/%d): %s | center_distance=%s"
+                       % (self.attempts, MAX_ATTACH_TRIES, msg, distance))
         if self.attempts >= MAX_ATTACH_TRIES:
             self.get_logger().error("giving up on attaching")
             self.state = "FAILED"
             return
-        if "fac" not in msg.lower():                            # not a heading problem: close the gap
-            self.dock_goal = (self.dock_goal[0] + CREEP, self.dock_goal[1])
+        reason = msg.lower()
+        if any(word in reason for word in ("gap", "distance", "close", "contact", "solenoid", "front")):
+            slot_length = math.hypot(*SLOT)
+            self.dock_goal = (self.dock_goal[0] - SLOT[0] / slot_length * CREEP,
+                              self.dock_goal[1] - SLOT[1] / slot_length * CREEP)
         self.settled = 0
 
     def request_detach(self):
@@ -451,6 +463,7 @@ class RobotNode(Node):
         self.ctl.reset()
         if name == "approach":
             self.dock_goal = self.leg.goal
+            self.dock_origin = self.leg.goal
             self.attempts = 0
             self.state = "DOCK"
         elif name == "carry":
@@ -471,7 +484,8 @@ class RobotNode(Node):
             self.settled += 1
         else:
             self.settled = 0
-        if self.settled >= SETTLE_TICKS and not self.pending:
+        need = SETTLE_TICKS if self.attempts == 0 else RETRY_SETTLE
+        if self.settled >= need and not self.pending:
             self.settled = 0
             self.request_attach()
 

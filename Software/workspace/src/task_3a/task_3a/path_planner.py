@@ -53,24 +53,24 @@ from nav_msgs.msg import Odometry, Path
 
 ################# ADD EXTRA IMPORTS / GLOBALS HERE ############
 CRATE_HALF = 0.1089                  # m, half the crate's footprint
-DESTINATION = (1.2192, 1.2192)       # hexagon centre
-SLOT = (-0.1798, 0.0)                # robot centre minus crate centre when docked
+CRATE_HALF_X = 0.1088                # m, half-width at the docking face
+DESTINATION = (1.2192, 1.2192)       # hexagon centre; crate centre must end here
+SOLENOID_REACH = 0.070                # m, chassis centre to solenoid tip
+DOCK_GAP = 0.001                      # m, gap from the solenoid tip to the crate
+SLOT = (-(CRATE_HALF_X + SOLENOID_REACH + DOCK_GAP), 0.0)  # left of crate, facing +x
 START = (1.2192, 2.2616)             # r2's start circle
 
-CARRY_SPEED = 0.15                   # m/s, the crate path is timed at this
+CARRY_SPEED = 0.20                   # m/s, the crate path is timed at this
 
 # teal (verdigris) top of payload_beta, OpenCV HSV (H 0-179). TUNE with debug_payload()
 TEAL_LOW, TEAL_HIGH = (78, 120, 140), (95, 255, 255)
 MIN_TOP_AREA = 400                   # px^2, ignore smaller teal blobs
 
-# The camera sees the raised top pushed outwards from the point under it
-# (taken as the arena centre). 1.0 = no correction. TUNE: calibrate until the
-# robot docks with the solenoid touching.
-PARALLAX = 0.95
+PARALLAX = 1.0
 
 PAD_RADIUS = 0.19                    # m, the crate's round pad (its dark rim is NOT an obstacle)
 TIGHT_MARGIN = 0.010                 # m, clearance kept from the crate itself on the approach
-APPROACH_MARGIN = 0.008              # m, pillar/wall clearance allowed ONLY where the dock needs it
+APPROACH_MARGIN = 0.01              # m, pillar/wall clearance allowed ONLY where the dock needs it
 SOFT_COST = 8.0                      # extra cost per metre inside the normal-margin zone
 ###############################################################
 
@@ -80,7 +80,7 @@ ROBOTS = ("r2",)
 START_CIRCLES = [(0.8969, 2.2616), (1.2192, 2.2616), (1.5415, 2.2616)]
 ARENA_SIZE = 2.4384                  # m
 ROBOT_RADIUS = 0.084                 # m
-SAFETY_MARGIN = 0.030                # m, kept clear on top of the robot radius
+SAFETY_MARGIN = 0.030               # m, kept clear on top of the robot radius
 
 # ----------------------------------------------------- camera (given)
 CAMERA_URL = "http://127.0.0.1:8080/stream"
@@ -91,8 +91,8 @@ SAND_LOW, SAND_HIGH = (10, 40, 170), (30, 120, 255)      # sand colour, HSV
 
 # ----------------------------------------------------- planning (tunable)
 PLAN_CELL = 0.04                     # m, planning grid cell
-PLAN_SPEED = 0.24                    # m/s, the speed the robot paths are timed at
-START_DELAY = 2.0                    # s, from publishing to setting off
+PLAN_SPEED = 0.30                    # m/s, the speed the robot paths are timed at
+START_DELAY = 1.0                    # s, from publishing to setting off
 
 LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
@@ -212,7 +212,7 @@ def remove_drivable(frame, occupied, robots, goals, payload=None):
     # free the painted floor: obstacles have low saturation
     hsv = cv2.cvtColor(crop_arena(frame), cv2.COLOR_BGR2HSV)
     saturation = cv2.split(hsv)[1]
-    painted = (saturation > 30).astype(np.float32)
+    painted = (saturation > 31).astype(np.float32)
     frac = cv2.resize(painted, (GRID_CELLS, GRID_CELLS), interpolation=cv2.INTER_AREA)
     occupied[frac > 0.65] = False
 
@@ -277,12 +277,13 @@ def carry_grid(occupied):
     fine = np.minimum((centre / CELL_SIZE).astype(int), GRID_CELLS - 1)
     blocked = inflated[np.ix_(fine, fine)].T
 
-    # walls: crate centre limits (robot sticks out on the left)
-    left = -SLOT[0] + ROBOT_RADIUS + m
-    right = CRATE_HALF + m
-    edge = max(CRATE_HALF, ROBOT_RADIUS) + m
+    # Keep the entire crate and the offset robot footprint inside the arena.
+    left = max(CRATE_HALF + m, -SLOT[0] + ROBOT_RADIUS + m)
+    right = max(CRATE_HALF + m, SLOT[0] + ROBOT_RADIUS + m)
+    top = max(CRATE_HALF + m, -SLOT[1] + ROBOT_RADIUS + m)
+    bottom = max(CRATE_HALF + m, SLOT[1] + ROBOT_RADIUS + m)
     blocked[(centre < left) | (centre > ARENA_SIZE - right), :] = True
-    blocked[:, (centre < edge) | (centre > ARENA_SIZE - edge)] = True
+    blocked[:, (centre < top) | (centre > ARENA_SIZE - bottom)] = True
     return blocked
 
 
@@ -527,7 +528,7 @@ class PathPlanner(Node):
         carried = occupied.copy()
         mark_square(carried, payload, CRATE_HALF + 0.05, False)   # + the sides the camera sees
 
-        # 1. approach: the crate is an obstacle with a thin margin, so its left side is reachable
+        # 1. approach the crate from its left side
         normal = planning_grid(carried) | crate_blocked(payload, SAFETY_MARGIN)
         tight = planning_grid(carried, APPROACH_MARGIN) | crate_blocked(payload, TIGHT_MARGIN)
         route = plan_route(tight, robot_xy, dock, soft=normal)
