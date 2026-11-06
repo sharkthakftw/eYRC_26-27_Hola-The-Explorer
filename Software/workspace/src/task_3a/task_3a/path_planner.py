@@ -60,7 +60,7 @@ DOCK_GAP = 0.001                      # m, gap from the solenoid tip to the crat
 SLOT = (-(CRATE_HALF_X + SOLENOID_REACH + DOCK_GAP), 0.0)  # left of crate, facing +x
 START = (1.2192, 2.2616)             # r2's start circle
 
-CARRY_SPEED = 0.20                   # m/s, the crate path is timed at this
+CARRY_SPEED = 0.23                   # m/s, the crate path is timed at this
 
 # teal (verdigris) top of payload_beta, OpenCV HSV (H 0-179). TUNE with debug_payload()
 TEAL_LOW, TEAL_HIGH = (78, 120, 140), (95, 255, 255)
@@ -91,7 +91,7 @@ SAND_LOW, SAND_HIGH = (10, 40, 170), (30, 120, 255)      # sand colour, HSV
 
 # ----------------------------------------------------- planning (tunable)
 PLAN_CELL = 0.04                     # m, planning grid cell
-PLAN_SPEED = 0.30                    # m/s, the speed the robot paths are timed at
+PLAN_SPEED = 0.34                    # m/s, the speed the robot paths are timed at
 START_DELAY = 1.0                    # s, from publishing to setting off
 
 LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -556,7 +556,6 @@ class PathPlanner(Node):
                                % (len(route), route[-1][0]))
         self.get_logger().info("approach waypoints: %s"
                                % [(round(x, 2), round(y, 2)) for _, x, y in route])
-        self.save_debug(frame, occupied, carried, carry_grid(carried))   # always save images
         self.carry_pub.publish(self.to_path_msg(carry, zero))
         self.get_logger().info("published /carry_plan, %d poses, %.1f s" % (len(carry), carry[-1][0]))
         self.return_pub.publish(self.to_path_msg(back, zero))

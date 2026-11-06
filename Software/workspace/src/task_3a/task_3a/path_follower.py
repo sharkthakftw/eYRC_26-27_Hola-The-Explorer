@@ -57,9 +57,9 @@ DOCK_GAP = 0.001
 SLOT = (-(CRATE_HALF_X + SOLENOID_REACH + DOCK_GAP), 0.0)
 HOLD_YAW = 0.0                         # face right, from the left side toward the crate
 
-V_CRUISE = 0.32                # m/s caps
-V_CARRY = 0.20
-V_NEAR = 0.17                  # m/s, along the last SLOW_PATH metres of every path
+V_CRUISE = 0.36                # m/s caps
+V_CARRY = 0.24
+V_NEAR = 0.20                  # m/s, along the last SLOW_PATH metres of every path
 SLOW_PATH = 0.12               # m of path left
 V_SLOW = 0.09                  # m/s, final creep onto a goal / docking
 KP_TRACK = 4.0                 # 1/s, pull back onto the path (on top of the path's own velocity)
@@ -69,7 +69,7 @@ CTL_TOL = 0.003                # m, GoToPoint stops commanding inside this
 DOCK_TOL = 0.004               # m, "on the docking point"
 CARRY_TOL = 0.005              # m, crate centre on the hexagon centre
 RETURN_TOL = 0.010             # m, back on the start circle
-SETTLE_TICKS = 5              # ticks in a row inside the tolerance
+SETTLE_TICKS = 2              # ticks in a row inside the tolerance
 
 CREEP = 0.003                  # m, nudge forward after a refused attach
 MAX_ATTACH_TRIES = 25          # 25 x 3 mm = up to 75 mm of creep
