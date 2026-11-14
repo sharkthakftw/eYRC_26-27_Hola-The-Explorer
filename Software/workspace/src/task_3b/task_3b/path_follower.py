@@ -16,8 +16,288 @@
 *****************************************************************************************
 '''
 
-# Team ID:          [ Team-ID ]
-# Author List:      [ Names of team members who worked on this file, separated by comma ]
+# Team ID:          [ 3142 ]
+# Author List:      [ Shourya Gupta, Sarthak Gupta ]
 # Filename:         path_follower.py
-# Functions:        [ Add every extra helper function you write to this list ]
-# Global variables: [ Add every extra global variable you declare to this list ]
+# Functions:        body_velocity_to_wheel_speeds(), body_to_wheels(), yaw_from_quat(),
+#                   wrap(), to_body(), path_to_traj(), position_at(),
+#                   RobotNode.request_attach(), RobotNode.request_detach(), ...
+# Global variables: KP_POS, KI_POS, KD_POS, KP_YAW, KI_YAW, KD_YAW, HOLD_YAW, SLOT, ...
+
+
+############################ WHAT THIS DOES ###################################
+#
+#   WAIT_PLAN -> APPROACH -> DOCK -> (attach) -> CARRY -> (detach) -> RETURN -> DONE
+#
+#  The robot holds the heading from the configured left-side docking slot,
+#  keeping the crate in front of the arrow while carried.
+#
+###############################################################################
+
+import math
+
+import numpy as np
+import rclpy
+from rclpy.executors import ExternalShutdownException
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
+from rclpy.time import Time
+from nav_msgs.msg import Odometry, Path
+from std_msgs.msg import Float64MultiArray
+from hb_description.srv import AttachPayload, DetachPayload
+
+################# ADD EXTRA IMPORTS / GLOBALS HERE ############
+KP_POS, KI_POS, KD_POS = 2.5, 0.05, 0.15
+KP_YAW, KI_YAW, KD_YAW = 3.0, 0.0, 0.1
+
+ROBOTS = ("r1","r2","r3")
+PAYLOAD = "payload_beta"
+CRATE_HALF_X = 0.1088
+SOLENOID_REACH = 0.070
+DOCK_GAP = 0.001
+SLOT = (-(CRATE_HALF_X + SOLENOID_REACH + DOCK_GAP), 0.0)
+HOLD_YAW = 0.0                         # face right, from the left side toward the crate
+
+V_CRUISE = 0.36                # m/s caps
+V_CARRY = 0.24
+V_NEAR = 0.20                  # m/s, along the last SLOW_PATH metres of every path
+SLOW_PATH = 0.12               # m of path left
+V_SLOW = 0.09                  # m/s, final creep onto a goal / docking
+KP_TRACK = 4.0                 # 1/s, pull back onto the path (on top of the path's own velocity)
+ERR_HOLD = 0.05                # m, the path clock waits when the robot is this far behind it
+CTL_TOL = 0.003                # m, GoToPoint stops commanding inside this
+
+DOCK_TOL = 0.004               # m, "on the docking point"
+CARRY_TOL = 0.005              # m, crate centre on the hexagon centre
+RETURN_TOL = 0.010             # m, back on the start circle
+SETTLE_TICKS = 2              # ticks in a row inside the tolerance
+
+CREEP = 0.003                  # m, nudge forward after a refused attach
+MAX_ATTACH_TRIES = 25          # 25 x 3 mm = up to 75 mm of creep
+RETRY_SETTLE = 6               # ticks to settle before a RE-try (the first try waits SETTLE_TICKS)
+###############################################################
+
+
+# ----------------------------------------------------- follower (given)
+CONTROL_HZ = 50.0
+LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+
+# ----------------------------------------------------- robot (same as Task 1B)
+WHEEL_RADIUS_M = 0.0255
+CHASSIS_RADIUS_M = 0.06412
+WHEEL_ANGLES_RAD = np.radians([30.0, 150.0, 270.0])
+IK_MATRIX = np.zeros((3, 3))
+_CTRL_LIMIT = 30.0             # rad/s
+
+
+######################### FROM TASK 2A ########################
+
+def body_velocity_to_wheel_speeds(vx, vy, w):
+    """Body twist (vx, vy, w) -> wheel speeds [left, right, back], rad/s."""
+    angles = WHEEL_ANGLES_RAD
+    linear_speed = vx * np.cos(angles) + vy * np.sin(angles)
+    rotational_speed = w * CHASSIS_RADIUS_M
+    return (linear_speed + rotational_speed) / WHEEL_RADIUS_M
+
+
+def body_to_wheels(vx, vy, wz):
+    """Like body_velocity_to_wheel_speeds(), but kept inside +/-_CTRL_LIMIT."""
+    raw = body_velocity_to_wheel_speeds(vx, vy, wz)
+    max_w = max(abs(w) for w in raw)
+    if max_w > _CTRL_LIMIT:
+        return [w * (_CTRL_LIMIT / max_w) for w in raw]
+    return raw
+
+
+def yaw_from_quat(w, x, y, z):
+    """Quaternion -> yaw, radians."""
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def wrap(a):
+    """Angle -> the same angle in (-pi, pi]."""
+    return math.atan2(math.sin(a), math.cos(a))
+
+
+def to_body(vx_a, vy_a, yaw):
+    """Arena-frame velocity -> body-frame velocity (vx, vy)."""
+    vx = (vx_a * math.cos(yaw)) + (vy_a * math.sin(yaw))
+    vy = (-vx_a * math.sin(yaw)) + (vy_a * math.cos(yaw))
+    return (vx, vy)
+
+
+class GoToPoint:
+    """PID controller: drive one robot straight at a point, holding a fixed yaw.
+    step()    -> go to a point (used to hold, dock and finish a path)
+    step_ff() -> follow a moving reference: its own velocity + a pull onto it"""
+
+    def __init__(self, v_max=V_CRUISE, w_max=2.0, kp=KP_POS, ki=KI_POS, kd=KD_POS,
+                 kyaw=KP_YAW, kiyaw=KI_YAW, kdyaw=KD_YAW, tol=CTL_TOL, dt=1.0 / CONTROL_HZ):
+        self.v_max, self.w_max = v_max, w_max
+        self.kp, self.ki, self.kd = kp, ki, kd
+        self.kyaw, self.kiyaw, self.kdyaw = kyaw, kiyaw, kdyaw
+        self.tol = tol
+        self.dt = dt
+        self.integral_limit = 1.0
+        self.reset()
+
+    def reset(self):
+        """Forget PID history (new leg / new target) so the first derivative
+        term does not kick."""
+        self.prev_error_x = self.prev_error_y = self.prev_error_yaw = 0.0
+        self.integral_x = self.integral_y = self.integral_yaw = 0.0
+        self.primed = False
+        self.yaw_primed = False
+
+    def _wz(self, pose_yaw, hold_yaw):
+        error_yaw = wrap(hold_yaw - pose_yaw)
+        if not self.yaw_primed:
+            self.prev_error_yaw = error_yaw
+            self.yaw_primed = True
+        self.integral_yaw += error_yaw * self.dt
+        self.integral_yaw = max(-self.integral_limit, min(self.integral_limit, self.integral_yaw))
+        deriv_yaw = (error_yaw - self.prev_error_yaw) / self.dt
+        self.prev_error_yaw = error_yaw
+        wz = (self.kyaw * error_yaw + self.kiyaw * self.integral_yaw
+              + self.kdyaw * deriv_yaw)
+        return max(-self.w_max, min(self.w_max, wz))
+
+    def step(self, pose, target, hold_yaw):
+        """pose (x, y, yaw), target (x, y), hold_yaw -> (wheels, distance)."""
+        target_x, target_y = target
+        pose_x, pose_y, pose_yaw = pose
+
+        error_x = target_x - pose_x
+        error_y = target_y - pose_y
+        dist = math.hypot(error_x, error_y)
+
+        if not self.primed:
+            self.prev_error_x, self.prev_error_y = error_x, error_y
+            self.primed = True
+
+        if dist <= self.tol:
+            vx_a = vy_a = 0.0
+            self.integral_x = self.integral_y = 0.0
+        else:
+            self.integral_x += error_x * self.dt
+            self.integral_y += error_y * self.dt
+            lim = self.integral_limit
+            self.integral_x = max(-lim, min(lim, self.integral_x))
+            self.integral_y = max(-lim, min(lim, self.integral_y))
+
+            deriv_x = (error_x - self.prev_error_x) / self.dt
+            deriv_y = (error_y - self.prev_error_y) / self.dt
+
+            vx_a = self.kp * error_x + self.ki * self.integral_x + self.kd * deriv_x
+            vy_a = self.kp * error_y + self.ki * self.integral_y + self.kd * deriv_y
+
+            speed = math.hypot(vx_a, vy_a)
+            if speed > self.v_max:
+                vx_a *= self.v_max / speed
+                vy_a *= self.v_max / speed
+
+        self.prev_error_x, self.prev_error_y = error_x, error_y
+
+        wz = self._wz(pose_yaw, hold_yaw)
+        vx_b, vy_b = to_body(vx_a, vy_a, pose_yaw)
+        return (body_to_wheels(vx_b, vy_b, wz), dist)
+
+    def step_ff(self, pose, ref_xy, v_ff, hold_yaw):
+        """Follow a moving reference point: arena velocity = the path's own
+        velocity (v_ff) + KP_TRACK * (reference - pose). Because the path's velocity
+        is fed forward, the robot does not trail behind it and cut corners."""
+        vx_a = v_ff[0] + KP_TRACK * (ref_xy[0] - pose[0])
+        vy_a = v_ff[1] + KP_TRACK * (ref_xy[1] - pose[1])
+        speed = math.hypot(vx_a, vy_a)
+        if speed > self.v_max:
+            vx_a *= self.v_max / speed
+            vy_a *= self.v_max / speed
+        self.primed = False                       # so a later step() does not inherit stale errors
+        wz = self._wz(pose[2], hold_yaw)
+        vx_b, vy_b = to_body(vx_a, vy_a, pose[2])
+        return body_to_wheels(vx_b, vy_b, wz)
+
+
+######################### FROM TASK 2B ########################
+
+def path_to_traj(msg):
+    """nav_msgs/Path -> [(t, x, y), ...], t = pose stamp - path stamp, in s."""
+    path_time = Time.from_msg(msg.header.stamp)
+    traj = []
+    for ps in msg.poses:
+        t = (Time.from_msg(ps.header.stamp) - path_time).nanoseconds * 1e-9
+        traj.append((t, ps.pose.position.x, ps.pose.position.y))
+    return traj
+
+
+def position_at(traj, t):
+    """Where the path says the robot should be at time t."""
+    if t <= traj[0][0]:
+        return traj[0][1:]
+    for (t0, x0, y0), (t1, x1, y1) in zip(traj, traj[1:]):
+        if t <= t1:
+            u = (t - t0) / (t1 - t0) if t1 > t0 else 1.0
+            return x0 + (x1 - x0) * u, y0 + (y1 - y0) * u
+    return traj[-1][1:]
+
+
+######################### ONE LEG OF THE JOB ##################
+
+class Leg:
+    """A timed path being followed. `offset` is added to every path point
+    (SLOT while carrying: the path is the crate's centre, the robot is SLOT away).
+
+    The path is followed with its OWN clock `s`, not the wall clock: `s` only
+    advances while the robot keeps up with the path. A late start, a slow turn
+    or a lagging robot therefore never makes the reference run ahead and drag the
+    robot in a straight line across obstacles to the goal."""
+
+    def __init__(self, name, traj, start, offset, v_max, tol):
+        self.name, self.traj, self.start = name, traj, start
+        self.offset, self.v_max, self.tol = offset, v_max, tol
+        self.end = traj[-1][0]
+        self.goal = (traj[-1][1] + offset[0], traj[-1][2] + offset[1])
+        self.s = traj[0][0]                       # path clock
+        self.cum = [0.0]                          # arc length at each waypoint
+        for (t0, x0, y0), (t1, x1, y1) in zip(traj, traj[1:]):
+            self.cum.append(self.cum[-1] + math.hypot(x1 - x0, y1 - y0))
+        self.length = self.cum[-1]
+
+    def ref(self, s):
+        """Path state at clock s -> (x, y, vx, vy, arc length still to go)."""
+        ox, oy = self.offset
+        traj = self.traj
+        if s <= traj[0][0]:
+            return (traj[0][1] + ox, traj[0][2] + oy, 0.0, 0.0, self.length)
+        for i, ((t0, x0, y0), (t1, x1, y1)) in enumerate(zip(traj, traj[1:])):
+            if s <= t1:
+                seg = t1 - t0
+                u = (s - t0) / seg if seg > 0 else 1.0
+                x, y = x0 + (x1 - x0) * u, y0 + (y1 - y0) * u
+                vx = (x1 - x0) / seg if seg > 0 else 0.0
+                vy = (y1 - y0) / seg if seg > 0 else 0.0
+                rem = self.length - (self.cum[i] + math.hypot(x - x0, y - y0))
+                return (x + ox, y + oy, vx, vy, max(rem, 0.0))
+        return (traj[-1][1] + ox, traj[-1][2] + oy, 0.0, 0.0, 0.0)
+
+class RobotNode(Node):
+# TODO
+
+def main():
+    rclpy.init()
+    node = RobotNode()
+    try:
+        rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        try:
+            node.send((0.0, 0.0, 0.0))                   # leave nothing driving
+        except Exception:
+            pass
+        node.destroy_node()
+        rclpy.try_shutdown()
+
+
+if __name__ == "__main__":
+    main()
